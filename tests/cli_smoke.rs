@@ -1,0 +1,100 @@
+use assert_cmd::Command;
+use predicates::prelude::*;
+use std::fs;
+use tempfile::tempdir;
+
+#[test]
+fn shows_help_when_no_args() {
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.assert()
+        .failure()
+        .stderr(predicates::str::contains("Usage:"));
+}
+
+#[test]
+fn error_on_conflicting_flags() {
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["-r", "--no-path", "."])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Cannot use --relative and --no-path together"));
+}
+
+#[test]
+fn shows_help_with_help_flag() {
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("cxt"));
+}
+
+#[test]
+fn shows_version_with_version_flag() {
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.arg("--version")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("cxt"));
+}
+
+#[test]
+fn error_on_nonexistent_file() {
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["nonexistent_file.txt"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Path does not exist"));
+}
+
+#[test]
+fn error_on_nonexistent_directory() {
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["nonexistent_directory/"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Path does not exist"));
+}
+
+#[test]
+fn prints_content_to_stdout() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    fs::write(&file_path, "Hello, World!").unwrap();
+
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["-p", file_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Hello, World!"));
+}
+
+#[test]
+fn prints_content_without_headers() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test.txt");
+    fs::write(&file_path, "Hello, World!").unwrap();
+
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["-n", "-p", file_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Hello, World!"))
+        .stdout(predicates::str::contains("--- File:").not());
+}
+
+#[test]
+fn writes_content_to_file() {
+    let dir = tempdir().unwrap();
+    let input_file = dir.path().join("input.txt");
+    let output_file = dir.path().join("output.txt");
+    fs::write(&input_file, "Test content").unwrap();
+
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["-w", output_file.to_str().unwrap(), input_file.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    assert!(content.contains("Test content"));
+} 
