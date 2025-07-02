@@ -1,9 +1,13 @@
 use anyhow::{Context, Result};
 use arboard::Clipboard;
 use dialoguer::Select;
+use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 pub struct OutputHandler {
     clipboard: Option<Clipboard>,
@@ -15,16 +19,111 @@ impl OutputHandler {
         Self { clipboard }
     }
 
-    /// Copy content to system clipboard
+    /// Copy content to system clipboard, using the best available method for the platform
     pub fn copy_to_clipboard(&mut self, content: &str) -> Result<()> {
-        if let Some(ref mut clipboard) = self.clipboard {
-            clipboard
-                .set_text(content)
-                .with_context(|| "Failed to copy content to clipboard")?;
-        } else {
+        // macOS: use pbcopy
+        #[cfg(target_os = "macos")]
+        {
+            println!("DEBUG: Using pbcopy for macOS");
+            let mut child = Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .with_context(|| "Failed to spawn pbcopy")?;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(content.as_bytes())
+                    .with_context(|| "Failed to write to pbcopy stdin")?;
+            }
+            child.wait().with_context(|| "Failed to wait for pbcopy")?;
+            return Ok(());
+        }
+
+        // Windows: use arboard
+        #[cfg(target_os = "windows")]
+        {
+            println!("DEBUG: Using arboard for Windows");
+            if let Some(ref mut clipboard) = self.clipboard {
+                clipboard.set_text(content)
+                    .with_context(|| "Failed to copy content to clipboard")?;
+                // Keep clipboard alive for a short time
+                thread::sleep(Duration::from_millis(500));
+                return Ok(());
+            } else {
+                return Err(anyhow::anyhow!("Clipboard not available on this system"));
+            }
+        }
+
+        // Linux/Unix: detect Wayland/X11 and use the best tool
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+        {
+            let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_default();
+            let wayland_display = env::var("WAYLAND_DISPLAY").unwrap_or_default();
+            let x11_display = env::var("DISPLAY").unwrap_or_default();
+
+            println!("DEBUG: Session type: '{}', Wayland display: '{}', X11 display: '{}'", 
+                     session_type, wayland_display, x11_display);
+
+            // Wayland: use wl-copy
+            if session_type == "wayland" || !wayland_display.is_empty() {
+                println!("DEBUG: Using wl-copy for Wayland");
+                let mut child = Command::new("wl-copy")
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                    .with_context(|| "Failed to spawn wl-copy. Is wl-clipboard installed?")?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    stdin.write_all(content.as_bytes())
+                        .with_context(|| "Failed to write to wl-copy stdin")?;
+                }
+                let status = child.wait().with_context(|| "Failed to wait for wl-copy")?;
+                if !status.success() {
+                    return Err(anyhow::anyhow!("wl-copy failed with status: {}", status));
+                }
+                println!("DEBUG: wl-copy completed successfully");
+                return Ok(());
+            }
+
+            // X11: use xclip if available
+            if !x11_display.is_empty() {
+                if Command::new("which").arg("xclip").output().map(|o| o.status.success()).unwrap_or(false) {
+                    println!("DEBUG: Using xclip for X11");
+                    let mut child = Command::new("xclip")
+                        .args(["-selection", "clipboard"])
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()
+                        .with_context(|| "Failed to spawn xclip. Is xclip installed?")?;
+                    if let Some(mut stdin) = child.stdin.take() {
+                        stdin.write_all(content.as_bytes())
+                            .with_context(|| "Failed to write to xclip stdin")?;
+                    }
+                    child.wait().with_context(|| "Failed to wait for xclip")?;
+                    return Ok(());
+                }
+            }
+
+            // Fallback: try arboard
+            if let Some(ref mut clipboard) = self.clipboard {
+                println!("DEBUG: Using arboard fallback");
+                clipboard.set_text(content)
+                    .with_context(|| "Failed to copy content to clipboard")?;
+                thread::sleep(Duration::from_millis(500));
+                return Ok(());
+            }
+
+            // If all else fails
+            return Err(anyhow::anyhow!("No supported clipboard system detected. Try installing wl-clipboard or xclip."));
+        }
+
+        // Other OS: fallback to arboard
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "macos", target_os = "windows")))]
+        {
+            println!("DEBUG: Using arboard for other OS");
+            if let Some(ref mut clipboard) = self.clipboard {
+                clipboard.set_text(content)
+                    .with_context(|| "Failed to copy content to clipboard")?;
+                thread::sleep(Duration::from_millis(500));
+                return Ok(());
+            }
             return Err(anyhow::anyhow!("Clipboard not available on this system"));
         }
-        Ok(())
     }
 
     /// Print content to stdout
