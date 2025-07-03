@@ -67,6 +67,7 @@ jobs:
       run: ./run-tests.sh
 
     - name: Check if tests passed
+      shell: bash
       run: |
         if [ $? -eq 0 ]; then
           echo "✅ All tests passed successfully!"

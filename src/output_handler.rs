@@ -59,8 +59,7 @@ impl OutputHandler {
             let wayland_display = env::var("WAYLAND_DISPLAY").unwrap_or_default();
             let x11_display = env::var("DISPLAY").unwrap_or_default();
 
-            println!("DEBUG: Session type: '{}', Wayland display: '{}', X11 display: '{}'", 
-                     session_type, wayland_display, x11_display);
+            println!("DEBUG: Session type: '{session_type}', Wayland display: '{wayland_display}', X11 display: '{x11_display}'");
 
             // Wayland: use wl-copy
             if session_type == "wayland" || !wayland_display.is_empty() {
