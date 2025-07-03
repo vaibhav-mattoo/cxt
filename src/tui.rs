@@ -140,14 +140,14 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
             let mut help_lines = vec![];
             let mut spans = vec![];
             let mut current_width = 0;
-            let extra_help = vec![
+            let extra_help = [
                 ("r", "Toggle relative path"),
                 ("n", "Toggle no path headers"),
             ];
             let all_help = help_items.iter().chain(extra_help.iter());
             for (i, (key, desc)) in all_help.enumerate() {
-                let key_str = format!("{}", key);
-                let desc_str = format!(": {}", desc);
+                let key_str = key.to_string();
+                let desc_str = format!(": {desc}");
                 let item_width = key_str.len() + desc_str.len() + if i > 0 { 2 } else { 0 };
                 if i > 0 {
                     if current_width + item_width > max_width {
