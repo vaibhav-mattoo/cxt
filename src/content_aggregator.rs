@@ -15,7 +15,7 @@ pub struct ContentAggregator {
 impl ContentAggregator {
     pub fn new(use_relative: bool, no_path: bool, include_hidden_in_dirs: bool) -> Self {
         Self {
-            path_formatter: PathFormatter::new(use_relative),
+            path_formatter: PathFormatter::new(use_relative, no_path),
             include_headers: !no_path,
             include_hidden_in_dirs,
             file_count: 0,
@@ -49,7 +49,7 @@ impl ContentAggregator {
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         if self.include_headers {
-            content.push_str(&self.path_formatter.create_header(path));
+            content.push_str(&self.path_formatter.format_path(path));
         }
         
         content.push_str(&file_content);

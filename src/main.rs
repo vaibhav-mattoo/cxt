@@ -16,7 +16,7 @@ fn main() -> Result<()> {
     
     // Validate arguments
     if let Err(e) = args.validate() {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
     
@@ -63,7 +63,7 @@ fn main() -> Result<()> {
         // Print was requested, also copy to clipboard
         if !args.ci {
             if let Err(e) = output_handler.copy_to_clipboard(&content) {
-                eprintln!("Warning: Failed to copy to clipboard: {}", e);
+                eprintln!("Warning: Failed to copy to clipboard: {e}");
             } else {
                 println!("Copied content from {} files to clipboard.", aggregator.file_count());
             }
