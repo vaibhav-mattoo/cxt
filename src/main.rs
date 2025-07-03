@@ -55,14 +55,18 @@ fn main() -> Result<()> {
     // Copy to clipboard if no specific output was requested, or if print was requested
     if !args.print && args.write.is_none() {
         // Default: copy to clipboard only
-        output_handler.copy_to_clipboard(&content)?;
-        println!("Copied content from {} files to clipboard.", aggregator.file_count());
+        if !args.ci {
+            output_handler.copy_to_clipboard(&content)?;
+            println!("Copied content from {} files to clipboard.", aggregator.file_count());
+        }
     } else if args.print {
         // Print was requested, also copy to clipboard
-        if let Err(e) = output_handler.copy_to_clipboard(&content) {
-            eprintln!("Warning: Failed to copy to clipboard: {}", e);
-        } else {
-            println!("Copied content from {} files to clipboard.", aggregator.file_count());
+        if !args.ci {
+            if let Err(e) = output_handler.copy_to_clipboard(&content) {
+                eprintln!("Warning: Failed to copy to clipboard: {}", e);
+            } else {
+                println!("Copied content from {} files to clipboard.", aggregator.file_count());
+            }
         }
     }
 

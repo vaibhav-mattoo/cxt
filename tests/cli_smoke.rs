@@ -6,7 +6,8 @@ use tempfile::tempdir;
 #[test]
 fn shows_help_when_no_args() {
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.assert()
+    cmd.args(["--ci"])
+        .assert()
         .failure()
         .stderr(predicates::str::contains("Usage:"));
 }
@@ -14,7 +15,7 @@ fn shows_help_when_no_args() {
 #[test]
 fn error_on_conflicting_flags() {
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["-r", "--no-path", "."])
+    cmd.args(["--ci", "-r", "--no-path", "."])
         .assert()
         .failure()
         .stderr(predicates::str::contains("Cannot use --relative and --no-path together"));
@@ -23,7 +24,7 @@ fn error_on_conflicting_flags() {
 #[test]
 fn shows_help_with_help_flag() {
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.arg("--help")
+    cmd.args(["--ci", "--help"])
         .assert()
         .success()
         .stdout(predicates::str::contains("cxt"));
@@ -32,7 +33,7 @@ fn shows_help_with_help_flag() {
 #[test]
 fn shows_version_with_version_flag() {
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.arg("--version")
+    cmd.args(["--ci", "--version"])
         .assert()
         .success()
         .stdout(predicates::str::contains("cxt"));
@@ -41,7 +42,7 @@ fn shows_version_with_version_flag() {
 #[test]
 fn error_on_nonexistent_file() {
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["nonexistent_file.txt"])
+    cmd.args(["--ci", "nonexistent_file.txt"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("Path does not exist"));
@@ -50,7 +51,7 @@ fn error_on_nonexistent_file() {
 #[test]
 fn error_on_nonexistent_directory() {
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["nonexistent_directory/"])
+    cmd.args(["--ci", "nonexistent_directory/"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("Path does not exist"));
@@ -63,7 +64,7 @@ fn prints_content_to_stdout() {
     fs::write(&file_path, "Hello, World!").unwrap();
 
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["-p", file_path.to_str().unwrap()])
+    cmd.args(["--ci", "-p", file_path.to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicates::str::contains("Hello, World!"));
@@ -76,7 +77,7 @@ fn prints_content_without_headers() {
     fs::write(&file_path, "Hello, World!").unwrap();
 
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["-n", "-p", file_path.to_str().unwrap()])
+    cmd.args(["--ci", "-n", "-p", file_path.to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicates::str::contains("Hello, World!"))
@@ -91,7 +92,7 @@ fn writes_content_to_file() {
     fs::write(&input_file, "Test content").unwrap();
 
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["-w", output_file.to_str().unwrap(), input_file.to_str().unwrap()])
+    cmd.args(["--ci", "-w", output_file.to_str().unwrap(), input_file.to_str().unwrap()])
         .assert()
         .success();
 

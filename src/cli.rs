@@ -31,6 +31,10 @@ pub struct Args {
     /// Include hidden files when walking directories
     #[arg(long, help = "Include hidden files when walking directories")]
     pub hidden: bool,
+
+    /// Run in non-interactive CI mode (disables clipboard operations)
+    #[arg(long, hide = true)]
+    pub ci: bool,
 }
 
 impl Args {
