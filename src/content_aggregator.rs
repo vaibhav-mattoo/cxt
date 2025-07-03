@@ -8,14 +8,16 @@ use crate::path_formatter::PathFormatter;
 pub struct ContentAggregator {
     path_formatter: PathFormatter,
     include_headers: bool,
+    include_hidden_in_dirs: bool,
     file_count: usize,
 }
 
 impl ContentAggregator {
-    pub fn new(use_relative: bool, no_path: bool) -> Self {
+    pub fn new(use_relative: bool, no_path: bool, include_hidden_in_dirs: bool) -> Self {
         Self {
             path_formatter: PathFormatter::new(use_relative),
             include_headers: !no_path,
+            include_hidden_in_dirs,
             file_count: 0,
         }
     }
@@ -31,6 +33,7 @@ impl ContentAggregator {
             }
             
             if path.is_file() {
+                // Always read files, even if hidden, when explicitly provided
                 self.aggregate_file(path, &mut content)?;
             } else if path.is_dir() {
                 self.aggregate_directory(path, &mut content)?;
@@ -65,8 +68,13 @@ impl ContentAggregator {
         {
             let path = entry.path();
             
-            // Skip directories and hidden files
-            if path.is_dir() || self.is_hidden_file(path) {
+            // Skip directories
+            if path.is_dir() {
+                continue;
+            }
+            
+            // Skip hidden files in directories unless --hidden flag is set
+            if !self.include_hidden_in_dirs && self.is_hidden_file(path) {
                 continue;
             }
             
@@ -102,7 +110,7 @@ mod tests {
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "Hello, World!").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false);
         let content = aggregator.aggregate_paths(&[file_path.to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Hello, World!"));
@@ -116,7 +124,7 @@ mod tests {
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "Hello, World!").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, true);
+        let mut aggregator = ContentAggregator::new(false, true, false);
         let content = aggregator.aggregate_paths(&[file_path.to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Hello, World!"));
@@ -136,7 +144,7 @@ mod tests {
         fs::write(&file1, "File 1 content").unwrap();
         fs::write(&file2, "File 2 content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false);
         let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("File 1 content"));
@@ -146,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_nonexistent_path() {
-        let mut aggregator = ContentAggregator::new(false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false);
         let result = aggregator.aggregate_paths(&["nonexistent_file.txt".to_string()]);
         
         assert!(result.is_err());
@@ -154,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn test_skip_hidden_files() {
+    fn test_skip_hidden_files_in_directory() {
         let dir = tempdir().unwrap();
         let visible_file = dir.path().join("visible.txt");
         let hidden_file = dir.path().join(".hidden.txt");
@@ -162,11 +170,41 @@ mod tests {
         fs::write(&visible_file, "Visible content").unwrap();
         fs::write(&hidden_file, "Hidden content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false);
         let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Visible content"));
         assert!(!content.contains("Hidden content"));
+        assert_eq!(aggregator.file_count(), 1);
+    }
+
+    #[test]
+    fn test_include_hidden_files_in_directory_with_flag() {
+        let dir = tempdir().unwrap();
+        let visible_file = dir.path().join("visible.txt");
+        let hidden_file = dir.path().join(".hidden.txt");
+        
+        fs::write(&visible_file, "Visible content").unwrap();
+        fs::write(&hidden_file, "Hidden content").unwrap();
+
+        let mut aggregator = ContentAggregator::new(false, false, true);
+        let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
+
+        assert!(content.contains("Visible content"));
+        assert!(content.contains("Hidden content"));
+        assert_eq!(aggregator.file_count(), 2);
+    }
+
+    #[test]
+    fn test_always_read_hidden_file_when_explicitly_provided() {
+        let dir = tempdir().unwrap();
+        let hidden_file = dir.path().join(".hidden.txt");
+        fs::write(&hidden_file, "Hidden content").unwrap();
+
+        let mut aggregator = ContentAggregator::new(false, false, false);
+        let content = aggregator.aggregate_paths(&[hidden_file.to_str().unwrap().to_string()]).unwrap();
+
+        assert!(content.contains("Hidden content"));
         assert_eq!(aggregator.file_count(), 1);
     }
 } 

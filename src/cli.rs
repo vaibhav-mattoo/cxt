@@ -27,6 +27,10 @@ pub struct Args {
     /// Disable file path headers
     #[arg(short, long, help = "Disable file path headers")]
     pub no_path: bool,
+
+    /// Include hidden files when walking directories
+    #[arg(long, help = "Include hidden files when walking directories")]
+    pub hidden: bool,
 }
 
 impl Args {

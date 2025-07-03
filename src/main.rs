@@ -30,6 +30,7 @@ fn main() -> Result<()> {
     let mut aggregator = ContentAggregator::new(
         args.relative,
         args.no_path,
+        args.hidden,
     );
 
     // Aggregate content from all specified paths
@@ -38,25 +39,29 @@ fn main() -> Result<()> {
     // Handle output based on flags
     let mut output_handler = OutputHandler::new();
     
-    match (args.print, args.write.as_deref()) {
-        (true, _) => {
-            // Print to stdout
-            output_handler.print_to_stdout(&content)?;
-            // Also copy to clipboard
-            if let Err(e) = output_handler.copy_to_clipboard(&content) {
-                eprintln!("Warning: Failed to copy to clipboard: {}", e);
-            } else {
-                println!("Copied content from {} files to clipboard.", aggregator.file_count());
-            }
-        }
-        (_, Some(file_path)) => {
-            // Write to file
-            output_handler.write_to_file(file_path, &content)?;
-            println!("Wrote content from {} files to {}", aggregator.file_count(), file_path);
-        }
-        (_, None) => {
-            // Default: copy to clipboard
-            output_handler.copy_to_clipboard(&content)?;
+    // Handle all output combinations
+    
+    // Print to stdout if requested
+    if args.print {
+        output_handler.print_to_stdout(&content)?;
+    }
+    
+    // Write to file if requested
+    if let Some(file_path) = &args.write {
+        output_handler.write_to_file(file_path, &content)?;
+        println!("Wrote content from {} files to {}", aggregator.file_count(), file_path);
+    }
+    
+    // Copy to clipboard if no specific output was requested, or if print was requested
+    if !args.print && args.write.is_none() {
+        // Default: copy to clipboard only
+        output_handler.copy_to_clipboard(&content)?;
+        println!("Copied content from {} files to clipboard.", aggregator.file_count());
+    } else if args.print {
+        // Print was requested, also copy to clipboard
+        if let Err(e) = output_handler.copy_to_clipboard(&content) {
+            eprintln!("Warning: Failed to copy to clipboard: {}", e);
+        } else {
             println!("Copied content from {} files to clipboard.", aggregator.file_count());
         }
     }
