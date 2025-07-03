@@ -9,7 +9,7 @@ use clap::Parser;
 )]
 pub struct Args {
     /// File and/or directory paths to aggregate
-    #[arg(required = true, help = "File and/or directory paths to aggregate")]
+    #[arg(required_unless_present = "tui", help = "File and/or directory paths to aggregate")]
     pub paths: Vec<String>,
 
     /// Print content to stdout
@@ -35,6 +35,10 @@ pub struct Args {
     /// Run in non-interactive CI mode (disables clipboard operations)
     #[arg(long, hide = true)]
     pub ci: bool,
+
+    /// Launch Terminal User Interface (TUI) mode
+    #[arg(short, long, help = "Launch interactive TUI file selector")]
+    pub tui: bool,
 }
 
 impl Args {

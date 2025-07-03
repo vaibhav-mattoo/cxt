@@ -6,6 +6,7 @@ mod cli;
 mod content_aggregator;
 mod output_handler;
 mod path_formatter;
+mod tui;
 
 use cli::Args;
 use content_aggregator::ContentAggregator;
@@ -19,12 +20,22 @@ fn main() -> Result<()> {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
-    
-    // Validate that paths are provided
-    if args.paths.is_empty() {
-        Args::command().print_help()?;
-        std::process::exit(1);
-    }
+
+    // Determine paths: from TUI or CLI
+    let paths: Vec<String> = if args.tui {
+        let selected = tui::run_tui()?;
+        if selected.is_empty() {
+            println!("No files or directories selected. Exiting.");
+            return Ok(());
+        }
+        selected
+    } else {
+        if args.paths.is_empty() {
+            Args::command().print_help()?;
+            std::process::exit(1);
+        }
+        args.paths.clone()
+    };
 
     // Initialize content aggregator
     let mut aggregator = ContentAggregator::new(
@@ -34,12 +45,10 @@ fn main() -> Result<()> {
     );
 
     // Aggregate content from all specified paths
-    let content = aggregator.aggregate_paths(&args.paths)?;
+    let content = aggregator.aggregate_paths(&paths)?;
 
     // Handle output based on flags
     let mut output_handler = OutputHandler::new();
-    
-    // Handle all output combinations
     
     // Print to stdout if requested
     if args.print {
