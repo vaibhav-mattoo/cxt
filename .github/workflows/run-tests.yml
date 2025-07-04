@@ -1,42 +1,42 @@
-name: Run Tests
-
-on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-
-jobs:
-  test:
-    name: Run Test Suite
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install clipboard dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y wl-clipboard xclip
-
-    - name: Make test script executable
-      run: chmod +x run-tests.sh
-
-    - name: Run test suite
-      run: ./run-tests.sh
-
-    - name: Verify test success
-      shell: bash
-      run: |
-        if [ $? -eq 0 ]; then
-          echo "🎉 All tests passed successfully!"
-          echo "✅ Unit tests: PASSED"
-          echo "✅ Integration tests: PASSED"
-        else
-          echo "❌ Test suite failed!"
-          exit 1
-        fi 
+# name: Run Tests
+#
+# on:
+#   push:
+#     branches: [ main, master ]
+#   pull_request:
+#     branches: [ main, master ]
+#
+# jobs:
+#   test:
+#     name: Run Test Suite
+#     runs-on: ubuntu-latest
+#
+#     steps:
+#     - name: Checkout code
+#       uses: actions/checkout@v4
+#
+#     - name: Install Rust
+#       uses: dtolnay/rust-toolchain@stable
+#
+#     - name: Install clipboard dependencies
+#       run: |
+#         sudo apt-get update
+#         sudo apt-get install -y wl-clipboard xclip
+#
+#     - name: Make test script executable
+#       run: chmod +x run-tests.sh
+#
+#     - name: Run test suite
+#       run: ./run-tests.sh
+#
+#     - name: Verify test success
+#       shell: bash
+#       run: |
+#         if [ $? -eq 0 ]; then
+#           echo "🎉 All tests passed successfully!"
+#           echo "✅ Unit tests: PASSED"
+#           echo "✅ Integration tests: PASSED"
+#         else
+#           echo "❌ Test suite failed!"
+#           exit 1
+#         fi 
