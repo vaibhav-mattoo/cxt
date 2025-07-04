@@ -1,0 +1,97 @@
+name: Cross-compile and Upload Release Assets
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v0.1.0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-upload:
+    name: Build and Upload Release Assets
+    strategy:
+      matrix:
+        include:
+          # Linux x86_64 (musl for static linking)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            ext: tar.gz
+          # Linux aarch64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            ext: tar.gz
+          # Linux armv7
+          - target: armv7-unknown-linux-musleabihf
+            os: ubuntu-latest
+            ext: tar.gz
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+          # macOS aarch64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+          # FreeBSD x86_64 (optional, needs cross support)
+          # - target: x86_64-unknown-freebsd
+          #   os: ubuntu-latest
+          #   ext: tar.gz
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cross (if needed)
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build with cross/cargo
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: --locked --release
+          strip: true
+
+      - name: Package binary (tar.gz/zip)
+        shell: bash
+        run: |
+          set -e
+          NAME="cxt"
+          TARGET="${{ matrix.target }}"
+          EXT="${{ matrix.ext }}"
+          OUTDIR="release"
+          mkdir -p "$OUTDIR"
+          # Windows: .exe, others: no extension
+          if [[ "$TARGET" == *windows* ]]; then
+            BIN="${NAME}.exe"
+            cp "target/${TARGET}/release/${BIN}" "${BIN}"
+            7z a -tzip "$OUTDIR/${NAME}-${TARGET}.zip" "${BIN}" LICENSE README.md || zip "$OUTDIR/${NAME}-${TARGET}.zip" "${BIN}" LICENSE README.md
+          else
+            BIN="${NAME}"
+            cp "target/${TARGET}/release/${BIN}" "${BIN}"
+            tar czf "$OUTDIR/${NAME}-${TARGET}.tar.gz" "${BIN}" LICENSE README.md
+          fi
+
+      - name: Get release info
+        id: get_release
+        uses: bruceadams/get-release@v1.3.2
+        with:
+          tag_name: v0.1.0
+
+      - name: Upload release asset
+        uses: shogo82148/actions-upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: release/cxt-*.${{ matrix.ext }}
+
+
