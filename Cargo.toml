@@ -2,10 +2,10 @@
 name = "cxt"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Vaibhav Mattoo <vaibhavmattoo1@gmail.com>"]
 description = "Aggregates file/directory contents and sends them to the clipboard, a file, or stdout"
 license = "MIT"
-repository = "https://github.com/yourusername/cxt"
+repository = "https://github.com/vaibhav-mattoo/cxt"
 keywords = ["clipboard", "file", "aggregation", "cli"]
 categories = ["command-line-utilities"]
 
@@ -23,3 +23,19 @@ crossterm = "0.27"
 assert_cmd = "2.0"
 predicates = "3.0"
 tempfile = "3.10" 
+
+[package.metadata.deb]
+maintainer = "Vaibhav Mattoo <vaibhavmattoo1@gmail.com>"
+copyright = "2025, Vaibhav Mattoo"
+license-file = ["LICENSE"]
+extended-description = """
+cxt is a command-line tool that aggregates the contents of files and directories into your clipboard, a file, or stdout. It's perfect for providing project context to AI chatbots or sharing code context with others.
+"""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/cxt", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/cxt/", "644"],
+    ["LICENSE", "usr/share/licenses/cxt/", "644"],
+]
+depends = "$auto"

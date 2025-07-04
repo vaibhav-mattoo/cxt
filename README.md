@@ -22,6 +22,24 @@ cargo install --path .
 cargo install cxt
 ```
 
+### On Arch Linux (AUR)
+
+You can install `cxt` directly from the AUR:
+
+```
+yay -S cxt
+# or
+paru -S cxt
+```
+
+### On Debian-based distributions (.deb package)
+
+```
+wget https://github.com/vaibhav-mattoo/cxt/releases/download/v0.1.0/cxt_0.1.0-1_amd64.deb
+sudo dpkg -i cxt_0.1.0-1_amd64.deb
+sudo apt-get install -f
+```
+
 ## Quick Start
 
 ### Interactive Mode
