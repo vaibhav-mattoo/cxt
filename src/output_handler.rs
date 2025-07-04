@@ -61,6 +61,35 @@ impl OutputHandler {
 
             // println!("DEBUG: Session type: '{session_type}', Wayland display: '{wayland_display}', X11 display: '{x11_display}'");
 
+            // Try popular clipboard managers first
+            let clipboard_managers = [
+                ("copyq", vec!["add", "-"]),
+                ("clipman", vec!["add", "-"]),
+                ("cliphist", vec!["store"]),
+                ("gpaste-client", vec!["add"]),
+                ("clipse", vec!["add"]),
+            ];
+
+            for (manager, args) in clipboard_managers.iter() {
+                if Command::new("which").arg(manager).output().map(|o| o.status.success()).unwrap_or(false) {
+                    // println!("DEBUG: Using {} for clipboard", manager);
+                    let mut child = Command::new(manager)
+                        .args(args)
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()
+                        .with_context(|| format!("Failed to spawn {}. Is {} installed?", manager, manager))?;
+                    if let Some(mut stdin) = child.stdin.take() {
+                        stdin.write_all(content.as_bytes())
+                            .with_context(|| format!("Failed to write to {} stdin", manager))?;
+                    }
+                    let status = child.wait().with_context(|| format!("Failed to wait for {}", manager))?;
+                    if status.success() {
+                        // println!("DEBUG: {} completed successfully", manager);
+                        return Ok(());
+                    }
+                }
+            }
+
             // Wayland: use wl-copy
             if session_type == "wayland" || !wayland_display.is_empty() {
                 // println!("DEBUG: Using wl-copy for Wayland");
@@ -106,7 +135,7 @@ impl OutputHandler {
             }
 
             // If all else fails
-            Err(anyhow::anyhow!("No supported clipboard system detected. Try installing wl-clipboard or xclip."))
+            Err(anyhow::anyhow!("No supported clipboard system detected. Try installing wl-clipboard, xclip, or a clipboard manager like copyq/clipman/cliphist."))
         }
 
         // Other OS: fallback to arboard

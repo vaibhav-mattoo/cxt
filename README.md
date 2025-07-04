@@ -1,163 +1,186 @@
-# cxt - Content Aggregation Tool
+# cxt - Context Extractor
 
-A command-line tool written in Rust that aggregates the contents of specified files and directories into a single string, then directs it to the clipboard (default), a file, or standard output.
+A command-line tool that aggregates file and directory contents into your clipboard, perfect for providing project context to AI chatbots in your browser like ChatGPT, Perplexity etc.
 
-## Features
+## Use Case
 
-- **File and Directory Support**: Read individual files or recursively walk through directories
-- **Multiple Output Destinations**: Copy to clipboard, write to file, or print to stdout
-- **Flexible Path Formatting**: Use absolute paths, relative paths, or no path headers
-- **Interactive File Conflict Resolution**: Choose to replace, append, or cancel when writing to existing files
-- **Cross-Platform Clipboard Support**: Works on Linux (X11 & Wayland), macOS, and Windows
-- **Robust Error Handling**: User-friendly error messages and graceful failure handling
+When you're working in the terminal and need to quickly share your project's code structure and contents with an AI assistant, `cxt` makes it effortless. Instead of manually copying files one by one, you can select multiple files and directories, and `cxt` will aggregate all their contents with clear path headers, giving the AI full context of your project structure.
 
 ## Installation
 
 ### From Source
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/yourusername/cxt.git
 cd cxt
-cargo build --release
+cargo install --path .
 ```
 
-The binary will be available at `target/release/cxt`.
-
-### Using Cargo
+### From Cargo
 
 ```bash
-cargo install --git <repository-url>
+cargo install cxt
 ```
 
-## Usage
+## Quick Start
+
+### Interactive Mode
+Launch the interactive file selector:
+
+```bash
+cxt --tui
+```
+
+Navigate with arrow keys or `hjkl`, select files/directories with `Space`, and confirm with `c`.
+
+### Command Line Mode
+Copy specific files to clipboard:
+
+```bash
+cxt file1.txt file2.py src/
+```
+
+## Usage Examples
 
 ### Basic Usage
 
 ```bash
-# Copy content from a single file to clipboard
-cxt README.md
+# Copy a single file to clipboard
+cxt main.rs
 
-# Copy content from multiple files to clipboard
-cxt file1.txt file2.txt file3.txt
+# Copy multiple files and directories
+cxt src/ tests/ README.md Cargo.toml
 
-# Copy content from a directory recursively to clipboard
-cxt ./src/
+# Print to stdout and copy to clipboard
+cxt -p src/
 
-# Copy content from mixed paths to clipboard
-cxt README.md ./src/ config.json
-```
-
-### Output Destinations
-
-#### Print to stdout
-```bash
-# Print content to terminal (also copies to clipboard)
-cxt -p README.md
-
-# Print content without copying to clipboard
-cxt -n -p README.md
-```
-
-#### Write to file
-```bash
-# Write content to a file
-cxt -w output.txt README.md
-
-# Write content with relative paths
-cxt -r -w context.txt ./src/
+# Write to a file and copy to clipboard
+cxt -w output.txt src/
 ```
 
 ### Path Formatting Options
 
-#### Relative paths
 ```bash
 # Use relative paths in headers
-cxt -r ./src/
+cxt -r src/
+
+# Disable path headers entirely
+cxt -n src/
+
+# Include hidden files when walking directories
+cxt --hidden src/
 ```
 
-#### No path headers
+### Combining Options
+
 ```bash
-# Disable path headers (raw content only)
-cxt -n README.md
+# Print to stdout with relative paths and copy to clipboard
+cxt -p -r src/ tests/
 
-# Combine with other options
-cxt -n -p README.md
-cxt -n -w output.txt ./src/
+# Write to file with no path headers
+cxt -w output.txt -n src/
 ```
+
+## Interactive TUI Mode
+
+The Terminal User Interface (TUI) provides an intuitive way to browse and select files:
+
+### Navigation
+- **Arrow keys** or **hjkl**: Move cursor
+- **Space**: Select/unselect file or directory
+- **Enter** or **l** or **→**: Open directory
+- **Backspace** or **h** or **←**: Go to parent directory
+- **c**: Confirm selection and exit
+- **q**: Quit without selection
+
+### TUI Features
+- **Visual selection**: Selected items are highlighted
+- **Directory expansion**: Selecting a directory includes all files within it
+- **Path toggles**: Press `r` to toggle relative paths, `n` to toggle no path headers
+
+## Command Line Options
+
+### Output Options
+- `-p, --print`: Print content to stdout (also copies to clipboard)
+- `-w, --write <FILE>`: Write content to specified file
+- `-t, --tui`: Launch interactive TUI file selector
+
+### Path Formatting
+- `-r, --relative`: Use relative paths in headers
+- `-n, --no-path`: Disable file path headers
+- `--hidden`: Include hidden files when walking directories
 
 ### Examples
 
 ```bash
-# 1. Default: Absolute paths, copied to clipboard
-cxt ./src
+# Interactive selection
+cxt --tui
 
-# 2. Relative paths, copied to clipboard
-cxt -r ./src
+# Print with relative paths
+cxt -p -r src/
 
-# 3. No paths, printed to terminal
-cxt -n -p ./README.md
+# Write to file, no path headers
+cxt -w context.txt -n src/ tests/
 
-# 4. Relative paths, written to a file
-cxt -r -w context.txt ./src ./README.md
-
-# 5. This will cause an error due to conflicting flags
-cxt -r --no-path .
-
-# 6. Show the help message
-cxt --help
+# Include hidden files
+cxt --hidden src/
 ```
 
-## Command Line Options
+## Output Format
 
-| Flag | Description |
-|------|-------------|
-| `-p, --print` | Print content to stdout |
-| `-w, --write <FILE_PATH>` | Write content to specified file |
-| `-r, --relative` | Use relative paths in headers |
-| `-n, --no-path` | Disable file path headers |
-| `-h, --help` | Show help message |
-| `-V, --version` | Show version information |
+By default, `cxt` adds path headers to distinguish between files:
 
-## File Conflict Resolution
+```
+--- File: /path/to/file1.txt ---
+Content of file1.txt
 
-When writing to a file that already exists, `cxt` will prompt you to choose:
+--- File: /path/to/file2.py ---
+Content of file2.py
+```
 
-- **[R]eplace**: Overwrite the existing file
-- **[A]ppend**: Add the content to the end of the file
-- **[C]ancel**: Abort the operation
+With `--relative`, paths are shown relative to current directory:
 
-## Error Handling
+```
+--- File: file1.txt ---
+Content of file1.txt
 
-The application provides clear error messages for common issues:
+--- File: src/file2.py ---
+Content of file2.py
+```
 
-- Non-existent paths
-- Permission errors
-- Clipboard unavailability
-- File system errors
+With `--no-path`, only raw content is included:
 
-## Technical Details
+```
+Content of file1.txt
+Content of file2.py
+```
 
-### Dependencies
+## Use Cases
 
-- **clap**: Command-line argument parsing
-- **arboard**: Cross-platform clipboard support
-- **anyhow**: Error handling
-- **walkdir**: Directory traversal
-- **dialoguer**: Interactive prompts
+Perfect for providing project context to AI assistants and sharing code snippets with colleagues:
 
-### Architecture
+```bash
+# Quick project overview
+cxt --tui
 
-The application is structured into several modules for maintainability and extensibility:
+# Specific files for debugging
+cxt -r main.rs error.log
 
-- `cli.rs`: Command-line interface and argument parsing
-- `content_aggregator.rs`: File and directory content aggregation
-- `output_handler.rs`: Output destination management
-- `path_formatter.rs`: Path formatting and header generation
+# Full project structure
+cxt -r src/ tests/ README.md
+```
 
-## Contributing
+## Requirements
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Rust 1.74.0 or later
+- For clipboard support:
+  - **Linux**: 
+    - **Wayland**: Any of these clipboard managers: `wl-clipboard`(default), `copyq`, `clipman`, `cliphist`, `gpaste`, `clipse`
+    - **X11**: Any of these clipboard managers: `xclip` (default) `copyq`, `gpaste`, `klipper`
+    - **Universal**: Any of the above clipboard managers which work on both X11 and Wayland
+  - **macOS**: Built-in clipboard support
+  - **Windows**: Built-in clipboard support
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+MIT License - see LICENSE file for details. 
