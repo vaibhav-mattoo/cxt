@@ -97,6 +97,9 @@ cxt -p -r src/ tests/
 
 # Write to file with no path headers
 cxt -w output.txt -n src/
+
+# Ignore a directory while copying a project
+cxt -i bin src/
 ```
 
 ## Interactive TUI Mode
@@ -127,6 +130,7 @@ The Terminal User Interface (TUI) provides an intuitive way to browse and select
 - `-r, --relative`: Use relative paths in headers
 - `-n, --no-path`: Disable file path headers
 - `--hidden`: Include hidden files when walking directories
+- `-i, --ignore <PATH>`: Ignore a file or directory (only one allowed)
 
 ### Examples
 
