@@ -16,11 +16,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, 1.74.0]
+        rust: [stable, 1.78.0]
         exclude:
           # Skip Windows with older Rust version to reduce CI time
           - os: windows-latest
-            rust: 1.74.0
+            rust: 1.78.0
 
     steps:
     - name: Checkout code
