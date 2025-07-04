@@ -77,12 +77,12 @@ impl OutputHandler {
                         .args(args)
                         .stdin(std::process::Stdio::piped())
                         .spawn()
-                        .with_context(|| format!("Failed to spawn {}. Is {} installed?", manager, manager))?;
+                        .with_context(|| format!("Failed to spawn {manager}. Is {manager} installed?"))?;
                     if let Some(mut stdin) = child.stdin.take() {
                         stdin.write_all(content.as_bytes())
-                            .with_context(|| format!("Failed to write to {} stdin", manager))?;
+                            .with_context(|| format!("Failed to write to {manager} stdin"))?;
                     }
-                    let status = child.wait().with_context(|| format!("Failed to wait for {}", manager))?;
+                    let status = child.wait().with_context(|| format!("Failed to wait for {manager}"))?;
                     if status.success() {
                         // println!("DEBUG: {} completed successfully", manager);
                         return Ok(());
