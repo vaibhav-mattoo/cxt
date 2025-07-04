@@ -15,34 +15,24 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux x86_64 (musl for static linking)
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             ext: tar.gz
-          # Linux aarch64
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             ext: tar.gz
-          # Linux armv7
           - target: armv7-unknown-linux-musleabihf
             os: ubuntu-latest
             ext: tar.gz
-          # macOS x86_64
           - target: x86_64-apple-darwin
             os: macos-latest
             ext: tar.gz
-          # macOS aarch64 (Apple Silicon)
           - target: aarch64-apple-darwin
             os: macos-latest
             ext: tar.gz
-          # Windows x86_64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             ext: zip
-          # FreeBSD x86_64 (optional, needs cross support)
-          # - target: x86_64-unknown-freebsd
-          #   os: ubuntu-latest
-          #   ext: tar.gz
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -71,7 +61,6 @@ jobs:
           EXT="${{ matrix.ext }}"
           OUTDIR="release"
           mkdir -p "$OUTDIR"
-          # Windows: .exe, others: no extension
           if [[ "$TARGET" == *windows* ]]; then
             BIN="${NAME}.exe"
             cp "target/${TARGET}/release/${BIN}" "${BIN}"
@@ -81,6 +70,10 @@ jobs:
             cp "target/${TARGET}/release/${BIN}" "${BIN}"
             tar czf "$OUTDIR/${NAME}-${TARGET}.tar.gz" "${BIN}" LICENSE README.md
           fi
+
+      - name: List packaged files
+        shell: bash
+        run: ls -lh release/
 
       - name: Get release info
         id: get_release
@@ -92,6 +85,5 @@ jobs:
         uses: shogo82148/actions-upload-release-asset@v1
         with:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: release/cxt-*.${{ matrix.ext }}
-
+          asset_path: release/cxt-${{ matrix.target }}.${{ matrix.ext }}
 
