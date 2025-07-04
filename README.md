@@ -1,5 +1,9 @@
 # cxt - Context Extractor
 
+[![Crates.io](https://img.shields.io/crates/v/cxt)](https://crates.io/crates/cxt)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build Status](https://github.com/vaibhav-mattoo/cxt/workflows/CI/badge.svg)](https://github.com/vaibhav-mattoo/cxt/actions)
+
 A command-line tool that aggregates file and directory contents into your clipboard, perfect for providing project context to AI chatbots in your browser like ChatGPT, Perplexity etc.
 
 ## Use Case
@@ -8,10 +12,20 @@ When you're working in the terminal and need to quickly share your project's cod
 
 ## Installation
 
+### Universal Install Script
+
+The easiest way to install `cxt` on any system:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/cxt/main/install.sh | sh
+```
+
+This script will automatically detect your system and install the appropriate binary.
+
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/cxt.git
+git clone https://github.com/vaibhav-mattoo/cxt.git
 cd cxt
 cargo install --path .
 ```
@@ -26,7 +40,7 @@ cargo install cxt
 
 You can install `cxt` directly from the AUR:
 
-```
+```bash
 yay -S cxt
 # or
 paru -S cxt
@@ -34,7 +48,7 @@ paru -S cxt
 
 ### On Debian-based distributions (.deb package)
 
-```
+```bash
 wget https://github.com/vaibhav-mattoo/cxt/releases/download/v0.1.0/cxt_0.1.0-1_amd64.deb
 sudo dpkg -i cxt_0.1.0-1_amd64.deb
 sudo apt-get install -f
