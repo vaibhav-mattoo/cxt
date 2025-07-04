@@ -42,6 +42,7 @@ fn main() -> Result<()> {
         args.relative,
         args.no_path,
         args.hidden,
+        args.ignore.clone().into_iter().collect::<Vec<_>>(),
     );
 
     // Aggregate content from all specified paths

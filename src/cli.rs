@@ -39,6 +39,10 @@ pub struct Args {
     /// Launch Terminal User Interface (TUI) mode
     #[arg(short, long, help = "Launch interactive TUI file selector")]
     pub tui: bool,
+
+    /// Ignore a file or directory
+    #[arg(short, long, help = "Ignore a file or directory", value_name = "PATH")]
+    pub ignore: Option<String>,
 }
 
 impl Args {
@@ -46,6 +50,11 @@ impl Args {
     pub fn validate(&self) -> Result<(), String> {
         if self.relative && self.no_path {
             return Err("Cannot use --relative and --no-path together".to_string());
+        }
+        if let Some(ignore_path) = &self.ignore {
+            if !std::path::Path::new(ignore_path).exists() {
+                return Err(format!("Ignore path does not exist: {}", ignore_path));
+            }
         }
         Ok(())
     }

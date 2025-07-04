@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -10,77 +10,115 @@ pub struct ContentAggregator {
     include_headers: bool,
     include_hidden_in_dirs: bool,
     file_count: usize,
+    ignore: Vec<std::path::PathBuf>,
 }
 
 impl ContentAggregator {
-    pub fn new(use_relative: bool, no_path: bool, include_hidden_in_dirs: bool) -> Self {
+    pub fn new(use_relative: bool, no_path: bool, include_hidden_in_dirs: bool, ignore: Vec<String>) -> Self {
         Self {
             path_formatter: PathFormatter::new(use_relative, no_path),
             include_headers: !no_path,
             include_hidden_in_dirs,
             file_count: 0,
+            ignore: ignore.into_iter().map(std::path::PathBuf::from).collect(),
         }
+    }
+
+    /// Check if a path should be ignored
+    fn is_ignored(&self, path: &Path) -> bool {
+        self.ignore.iter().any(|ignore_path| {
+            path == ignore_path || path.starts_with(ignore_path)
+        })
     }
 
     /// Aggregate content from multiple paths
     pub fn aggregate_paths(&mut self, paths: &[String]) -> Result<String> {
         let mut content = String::new();
-        
         for path_str in paths {
             let path = Path::new(path_str);
             if !path.exists() {
                 return Err(anyhow::anyhow!("Path does not exist: {}", path_str));
             }
-            
+            if self.is_ignored(path) {
+                continue;
+            }
             if path.is_file() {
-                // Always read files, even if hidden, when explicitly provided
                 self.aggregate_file(path, &mut content)?;
             } else if path.is_dir() {
+                if !self.include_hidden_in_dirs && self.is_hidden_file(path) && !self.is_explicit_path(path, paths) {
+                    continue;
+                }
                 self.aggregate_directory(path, &mut content)?;
             }
         }
-        
         Ok(content)
+    }
+
+    /// Helper: check if a path is explicitly specified in the input paths
+    fn is_explicit_path<'a>(&self, path: &Path, input_paths: &'a [String]) -> bool {
+        input_paths.iter().any(|p| Path::new(p) == path)
     }
 
     /// Aggregate content from a single file
     fn aggregate_file(&mut self, path: &Path, content: &mut String) -> Result<()> {
-        let file_content = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
-
-        if self.include_headers {
-            content.push_str(&self.path_formatter.format_path(path));
+        match fs::read_to_string(path) {
+            Ok(file_content) => {
+                if self.include_headers {
+                    content.push_str(&self.path_formatter.format_path(path));
+                }
+                content.push_str(&file_content);
+                content.push('\n');
+                self.file_count += 1;
+            },
+            Err(e) => {
+                eprintln!("Warning: Failed to read file '{}': {e}", path.display());
+            }
         }
-        
-        content.push_str(&file_content);
-        content.push('\n');
-        
-        self.file_count += 1;
         Ok(())
     }
 
     /// Aggregate content from a directory recursively
     fn aggregate_directory(&mut self, dir_path: &Path, content: &mut String) -> Result<()> {
-        for entry in WalkDir::new(dir_path)
+        let include_hidden = self.include_hidden_in_dirs;
+        let ignore = self.ignore.clone();
+        let is_hidden = |path: &Path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with('.'))
+                .unwrap_or(false)
+        };
+        let is_ignored = |path: &Path| {
+            ignore.iter().any(|ignore_path| path == ignore_path || path.starts_with(ignore_path))
+        };
+        let walker = WalkDir::new(dir_path)
             .follow_links(true)
             .into_iter()
-            .filter_map(|e| e.ok())
-        {
+            .filter_entry(|entry| {
+                let path = entry.path();
+                if is_ignored(path) {
+                    return false;
+                }
+                if path == dir_path {
+                    true
+                } else if path.is_dir() && is_hidden(path) {
+                    include_hidden
+                } else {
+                    true
+                }
+            });
+        for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
-            
-            // Skip directories
+            if is_ignored(path) {
+                continue;
+            }
             if path.is_dir() {
                 continue;
             }
-            
-            // Skip hidden files in directories unless --hidden flag is set
-            if !self.include_hidden_in_dirs && self.is_hidden_file(path) {
+            if !include_hidden && is_hidden(path) {
                 continue;
             }
-            
             self.aggregate_file(path, content)?;
         }
-        
         Ok(())
     }
 
@@ -110,7 +148,7 @@ mod tests {
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "Hello, World!").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
         let content = aggregator.aggregate_paths(&[file_path.to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Hello, World!"));
@@ -124,7 +162,7 @@ mod tests {
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "Hello, World!").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, true, false);
+        let mut aggregator = ContentAggregator::new(false, true, false, vec![]);
         let content = aggregator.aggregate_paths(&[file_path.to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Hello, World!"));
@@ -144,7 +182,7 @@ mod tests {
         fs::write(&file1, "File 1 content").unwrap();
         fs::write(&file2, "File 2 content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
         let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("File 1 content"));
@@ -154,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_nonexistent_path() {
-        let mut aggregator = ContentAggregator::new(false, false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
         let result = aggregator.aggregate_paths(&["nonexistent_file.txt".to_string()]);
         
         assert!(result.is_err());
@@ -170,7 +208,7 @@ mod tests {
         fs::write(&visible_file, "Visible content").unwrap();
         fs::write(&hidden_file, "Hidden content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
         let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Visible content"));
@@ -187,7 +225,7 @@ mod tests {
         fs::write(&visible_file, "Visible content").unwrap();
         fs::write(&hidden_file, "Hidden content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, true);
+        let mut aggregator = ContentAggregator::new(false, false, true, vec![]);
         let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Visible content"));
@@ -201,7 +239,7 @@ mod tests {
         let hidden_file = dir.path().join(".hidden.txt");
         fs::write(&hidden_file, "Hidden content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false);
+        let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
         let content = aggregator.aggregate_paths(&[hidden_file.to_str().unwrap().to_string()]).unwrap();
 
         assert!(content.contains("Hidden content"));
