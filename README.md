@@ -2,7 +2,6 @@
 
 [![Crates.io](https://img.shields.io/crates/v/cxt)](https://crates.io/crates/cxt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/vaibhav-mattoo/cxt/actions/workflows/ci.yml/badge.svg)](https://github.com/vaibhav-mattoo/cxt/actions)
 
 A command-line tool that aggregates file and directory contents into your clipboard, perfect for providing project context to AI chatbots in your browser like ChatGPT, Perplexity etc.
 
