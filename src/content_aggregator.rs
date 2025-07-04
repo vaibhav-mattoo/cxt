@@ -55,7 +55,7 @@ impl ContentAggregator {
     }
 
     /// Helper: check if a path is explicitly specified in the input paths
-    fn is_explicit_path<'a>(&self, path: &Path, input_paths: &'a [String]) -> bool {
+    fn is_explicit_path(&self, path: &Path, input_paths: &[String]) -> bool {
         input_paths.iter().any(|p| Path::new(p) == path)
     }
 

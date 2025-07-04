@@ -53,7 +53,7 @@ impl Args {
         }
         if let Some(ignore_path) = &self.ignore {
             if !std::path::Path::new(ignore_path).exists() {
-                return Err(format!("Ignore path does not exist: {}", ignore_path));
+                return Err(format!("Ignore path does not exist: {ignore_path}"));
             }
         }
         Ok(())
