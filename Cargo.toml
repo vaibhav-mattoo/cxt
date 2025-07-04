@@ -8,6 +8,11 @@ license = "MIT"
 repository = "https://github.com/vaibhav-mattoo/cxt"
 keywords = ["clipboard", "file", "aggregation", "cli"]
 categories = ["command-line-utilities"]
+readme = "README.md"
+homepage = "https://github.com/vaibhav-mattoo/cxt"
+license-file = "LICENSE"
+exclude = ["/target", "/*.rs.bk", "run-tests.sh"]
+
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
