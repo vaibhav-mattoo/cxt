@@ -6,6 +6,9 @@ on:
     tags:
       - "v0.1.0"
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
