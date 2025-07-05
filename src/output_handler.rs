@@ -5,7 +5,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -19,14 +19,14 @@ impl OutputHandler {
         Self { clipboard }
     }
 
-    /// Copy content to system clipboard, using the best available method for the platform
+    /// Copy content to system clipboard, trying popular managers first,
+    /// then wl-copy (Wayland), xclip (X11), and finally arboard as a fallback.
     pub fn copy_to_clipboard(&mut self, content: &str) -> Result<()> {
         // macOS: use pbcopy
         #[cfg(target_os = "macos")]
         {
-            // println!("DEBUG: Using pbcopy for macOS");
             let mut child = Command::new("pbcopy")
-                .stdin(std::process::Stdio::piped())
+                .stdin(Stdio::piped())
                 .spawn()
                 .with_context(|| "Failed to spawn pbcopy")?;
             if let Some(mut stdin) = child.stdin.take() {
@@ -40,11 +40,9 @@ impl OutputHandler {
         // Windows: use arboard
         #[cfg(target_os = "windows")]
         {
-            // println!("DEBUG: Using arboard for Windows");
             if let Some(ref mut clipboard) = self.clipboard {
-                clipboard.set_text(content)
-                    .with_context(|| "Failed to copy content to clipboard")?;
-                // Keep clipboard alive for a short time
+                clipboard.set_text(content.to_string())
+                    .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
                 return Ok(());
             } else {
@@ -52,69 +50,68 @@ impl OutputHandler {
             }
         }
 
-        // Linux/Unix: detect Wayland/X11 and use the best tool
+        // Linux/Unix: try managers → Wayland → X11 → arboard
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
         {
-            let session_type = env::var("XDG_SESSION_TYPE").unwrap_or_default();
-            let wayland_display = env::var("WAYLAND_DISPLAY").unwrap_or_default();
-            let x11_display = env::var("DISPLAY").unwrap_or_default();
+            let session_type  = env::var("XDG_SESSION_TYPE").unwrap_or_default().to_lowercase();
+            let wayland_disp  = env::var("WAYLAND_DISPLAY").unwrap_or_default();
+            let x11_disp      = env::var("DISPLAY").unwrap_or_default();
 
-            // println!("DEBUG: Session type: '{session_type}', Wayland display: '{wayland_display}', X11 display: '{x11_display}'");
-
-            // Try popular clipboard managers first
+            // 1) Popular clipboard managers
             let clipboard_managers = [
-                ("copyq", vec!["add", "-"]),
-                ("clipman", vec!["add", "-"]),
-                ("cliphist", vec!["store"]),
-                ("gpaste-client", vec!["add"]),
-                ("clipse", vec!["add"]),
+                ("copyq", &["add", "-"][..]),
+                ("clipman", &["add", "-"][..]),
+                ("cliphist", &["store"][..]),
+                ("gpaste-client", &["add"][..]),
+                ("clipse", &["add"][..]),
             ];
 
-            for (manager, args) in clipboard_managers.iter() {
-                if Command::new("which").arg(manager).output().map(|o| o.status.success()).unwrap_or(false) {
-                    // println!("DEBUG: Using {} for clipboard", manager);
-                    let mut child = Command::new(manager)
-                        .args(args)
-                        .stdin(std::process::Stdio::piped())
+            for (mgr, args) in &clipboard_managers {
+                if Command::new("which").arg(mgr)
+                        .stdout(Stdio::null()).stderr(Stdio::null())
+                        .status().map(|s| s.success()).unwrap_or(false)
+                {
+                    let mut child = Command::new(mgr)
+                        .args(*args)
+                        .stdin(Stdio::piped())
                         .spawn()
-                        .with_context(|| format!("Failed to spawn {manager}. Is {manager} installed?"))?;
+                        .with_context(|| format!("Failed to spawn {mgr}. Is {mgr} installed?"))?;
                     if let Some(mut stdin) = child.stdin.take() {
                         stdin.write_all(content.as_bytes())
-                            .with_context(|| format!("Failed to write to {manager} stdin"))?;
+                            .with_context(|| format!("Failed to write to {mgr} stdin"))?;
                     }
-                    let status = child.wait().with_context(|| format!("Failed to wait for {manager}"))?;
-                    if status.success() {
-                        // println!("DEBUG: {} completed successfully", manager);
+                    if child.wait().with_context(|| format!("Failed to wait for {mgr}"))?.success() {
                         return Ok(());
                     }
                 }
             }
 
-            // Wayland: use wl-copy
-            if session_type == "wayland" || !wayland_display.is_empty() {
-                // println!("DEBUG: Using wl-copy for Wayland");
+            // 2) Wayland: wl-copy if installed
+            let have_wl_copy = Command::new("which").arg("wl-copy")
+                .stdout(Stdio::null()).stderr(Stdio::null())
+                .status().map(|s| s.success()).unwrap_or(false);
+            if (session_type == "wayland" || !wayland_disp.is_empty()) && have_wl_copy {
                 let mut child = Command::new("wl-copy")
-                    .stdin(std::process::Stdio::piped())
+                    .stdin(Stdio::piped())
                     .spawn()
                     .with_context(|| "Failed to spawn wl-copy. Is wl-clipboard installed?")?;
                 if let Some(mut stdin) = child.stdin.take() {
                     stdin.write_all(content.as_bytes())
                         .with_context(|| "Failed to write to wl-copy stdin")?;
                 }
-                let status = child.wait().with_context(|| "Failed to wait for wl-copy")?;
-                if !status.success() {
-                    return Err(anyhow::anyhow!("wl-copy failed with status: {}", status));
+                if child.wait().with_context(|| "Failed to wait for wl-copy")?.success() {
+                    return Ok(());
                 }
-                // println!("DEBUG: wl-copy completed successfully");
-                return Ok(());
             }
 
-            // X11: use xclip if available
-            if !x11_display.is_empty() && Command::new("which").arg("xclip").output().map(|o| o.status.success()).unwrap_or(false) {
-                // println!("DEBUG: Using xclip for X11");
+            // 3) X11: xclip if DISPLAY set
+            let have_xclip = Command::new("which").arg("xclip")
+                .stdout(Stdio::null()).stderr(Stdio::null())
+                .status().map(|s| s.success()).unwrap_or(false);
+            if !x11_disp.is_empty() && have_xclip {
                 let mut child = Command::new("xclip")
-                    .args(["-selection", "clipboard"])
-                    .stdin(std::process::Stdio::piped())
+                    .args(&["-selection", "clipboard"])
+                    .stdin(Stdio::piped())
                     .spawn()
                     .with_context(|| "Failed to spawn xclip. Is xclip installed?")?;
                 if let Some(mut stdin) = child.stdin.take() {
@@ -125,26 +122,31 @@ impl OutputHandler {
                 return Ok(());
             }
 
-            // Fallback: try arboard
+            // 4) Fallback: arboard crate
             if let Some(ref mut clipboard) = self.clipboard {
-                // println!("DEBUG: Using arboard fallback");
-                clipboard.set_text(content)
-                    .with_context(|| "Failed to copy content to clipboard")?;
+                clipboard.set_text(content.to_string())
+                    .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
                 return Ok(());
             }
 
-            // If all else fails
-            Err(anyhow::anyhow!("No supported clipboard system detected. Try installing wl-clipboard, xclip, or a clipboard manager like copyq/clipman/cliphist."))
+            // Nothing available
+            Err(anyhow::anyhow!(
+                "No supported clipboard tool found. \
+                 Please install one of: copyq, clipman, cliphist, gpaste-client, \
+                 wl-clipboard (for wl-copy), xclip, or ensure arboard works."
+            ))
         }
 
         // Other OS: fallback to arboard
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(
+            target_os = "linux", target_os = "freebsd", target_os = "openbsd",
+            target_os = "netbsd", target_os = "macos", target_os = "windows"
+        )))]
         {
-            // println!("DEBUG: Using arboard for other OS");
             if let Some(ref mut clipboard) = self.clipboard {
-                clipboard.set_text(content)
-                    .with_context(|| "Failed to copy content to clipboard")?;
+                clipboard.set_text(content.to_string())
+                    .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
                 return Ok(());
             }
@@ -162,10 +164,9 @@ impl OutputHandler {
     /// Write content to a file with interactive conflict resolution
     pub fn write_to_file(&self, file_path: &str, content: &str) -> Result<()> {
         let path = Path::new(file_path);
-        
+
         if path.exists() {
             let choice = self.handle_file_conflict(file_path)?;
-            
             match choice {
                 FileWriteChoice::Replace => {
                     fs::write(path, content)
@@ -177,7 +178,6 @@ impl OutputHandler {
                         .append(true)
                         .open(path)
                         .with_context(|| format!("Failed to open file for appending: {file_path}"))?;
-                    
                     writeln!(file, "\n{content}")
                         .with_context(|| format!("Failed to append to file: {file_path}"))?;
                 }
@@ -187,37 +187,32 @@ impl OutputHandler {
                 }
             }
         } else {
-            // Create parent directories if they don't exist
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
             }
-            
             fs::write(path, content)
                 .with_context(|| format!("Failed to write to file: {file_path}"))?;
         }
-        
+
         Ok(())
     }
 
     /// Handle file conflict with interactive prompt
     fn handle_file_conflict(&self, file_path: &str) -> Result<FileWriteChoice> {
         println!("File '{file_path}' already exists. What would you like to do?");
-        
-        let options = vec!["Replace", "Append", "Cancel"];
+        let options = &["Replace", "Append", "Cancel"];
         let selection = Select::new()
             .with_prompt("Choose an option")
-            .items(&options)
+            .items(options)
             .default(0)
             .interact()
             .with_context(|| "Failed to get user input")?;
-
-        match selection {
-            0 => Ok(FileWriteChoice::Replace),
-            1 => Ok(FileWriteChoice::Append),
-            2 => Ok(FileWriteChoice::Cancel),
-            _ => unreachable!(),
-        }
+        Ok(match selection {
+            0 => FileWriteChoice::Replace,
+            1 => FileWriteChoice::Append,
+            _ => FileWriteChoice::Cancel,
+        })
     }
 }
 
@@ -226,4 +221,4 @@ enum FileWriteChoice {
     Replace,
     Append,
     Cancel,
-} 
+}
