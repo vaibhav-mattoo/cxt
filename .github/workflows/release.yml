@@ -2,10 +2,6 @@ name: Cross-compile and Upload Release Assets
 
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g. v0.1.1)'
-        required: true
 
 permissions:
   contents: write
@@ -40,13 +36,18 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout at the release tag
+      - name: Get latest release tag
+        id: latest_release
+        uses: pozetroninc/github-action-get-latest-release@v0.7.0
+        with:
+          repository: vaibhav-mattoo/cxt
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout at the latest release tag
         uses: actions/checkout@v4
         with:
-          # fetch all tags and history so we can check out a tag
           fetch-depth: 0
-          # check out the tag provided as workflow input
-          ref: ${{ github.event.inputs.tag }}
+          ref: ${{ steps.latest_release.outputs.release }}
 
       - name: Install cross (if needed)
         if: runner.os == 'Linux'
@@ -87,6 +88,8 @@ jobs:
       - name: Get release info
         id: get_release
         uses: bruceadams/get-release@v1.3.2
+        with:
+          tag_name: ${{ steps.latest_release.outputs.release }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -95,3 +98,4 @@ jobs:
         with:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
           asset_path: release/cxt-${{ matrix.target }}.${{ matrix.ext }}
+
