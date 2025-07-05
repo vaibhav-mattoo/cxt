@@ -1,7 +1,13 @@
 name: Cross-compile and Upload Release Assets
 
+
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.1)'
+        required: true
+
 
 permissions:
   contents: write
