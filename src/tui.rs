@@ -1,8 +1,25 @@
 use anyhow::{Result, Context};
-use crossterm::{event::{self, Event, KeyCode, KeyEvent}, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, execute as crossterm_execute};
-use ratatui::{backend::CrosstermBackend, Terminal, widgets::{Block, Borders, List, ListItem, Paragraph, Wrap}, layout::{Layout, Constraint, Direction}, style::{Style, Color, Modifier}};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    execute as crossterm_execute,
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    Terminal,
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    layout::{Layout, Constraint, Direction},
+    style::{Style, Color, Modifier},
+};
 use ratatui::text::{Span, Line};
-use std::{collections::HashSet, env, fs, io, path::{PathBuf}, time::Duration};
+use std::{
+    collections::HashSet,
+    env,
+    fs,
+    io,
+    path::PathBuf,
+    time::Duration,
+};
 use std::io::Write;
 
 pub fn run_tui() -> Result<Vec<String>> {
@@ -25,6 +42,8 @@ struct AppState {
     current_dir: PathBuf,
     entries: Vec<fs::DirEntry>,
     cursor: usize,
+    scroll_offset: usize,
+    visible_height: usize,
     selected: HashSet<PathBuf>,
     relative: bool,
     no_path: bool,
@@ -38,10 +57,64 @@ impl AppState {
             current_dir,
             entries,
             cursor: 0,
+            scroll_offset: 0,
+            visible_height: 10,
             selected: HashSet::new(),
             relative: false,
             no_path: false,
         })
+    }
+
+    /// Ensure cursor and scroll_offset are within valid bounds.
+    fn ensure_cursor_visible(&mut self, visible_height: usize) {
+        self.visible_height = visible_height;
+
+        // Clamp cursor
+        if self.cursor >= self.entries.len() {
+            self.cursor = self.entries.len().saturating_sub(1);
+        }
+
+        // No scrolling needed if everything fits
+        if self.entries.len() <= visible_height {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        let top_margin = 2;
+        let bottom_margin = 2;
+
+        let visible_start = self.scroll_offset;
+        let visible_end = self.scroll_offset + visible_height;
+
+        // Scroll up
+        if self.cursor < visible_start + top_margin && self.scroll_offset > 0 {
+            self.scroll_offset = self.cursor.saturating_sub(top_margin);
+        }
+        // Scroll down
+        else if self.cursor + bottom_margin >= visible_end && self.scroll_offset + visible_height < self.entries.len() {
+            self.scroll_offset = (self.cursor + bottom_margin + 1).saturating_sub(visible_height);
+        }
+
+        // Clamp scroll_offset
+        let max_scroll = self.entries.len().saturating_sub(visible_height);
+        self.scroll_offset = self.scroll_offset.min(max_scroll);
+    }
+
+    fn move_cursor_up(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+
+    fn move_cursor_down(&mut self) {
+        if self.cursor + 1 < self.entries.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn reset_cursor(&mut self) {
+        self.cursor = 0;
+        self.scroll_offset = 0;
     }
 }
 
@@ -68,75 +141,11 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
         ("c", "Confirm"),
         ("q", "Quit"),
     ];
+
     loop {
         terminal.draw(|f| {
-            // Current path (top bar)
-            let path = if app.no_path {
-                String::from("[No Path Headers]")
-            } else if app.relative {
-                match app.current_dir.strip_prefix(env::current_dir().unwrap_or_else(|_| PathBuf::from("."))) {
-                    Ok(rel) => rel.display().to_string(),
-                    Err(_) => app.current_dir.display().to_string(),
-                }
-            } else {
-                app.current_dir.display().to_string()
-            };
-            let mut title_str = String::from("Current Directory");
-            if app.no_path {
-                title_str.push_str(" [n: no path]");
-            } else if app.relative {
-                title_str.push_str(" [r: relative]");
-            }
-            let current_dir_title = Span::styled(
-                title_str,
-                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
-            );
-            let path_widget = Paragraph::new(path)
-                .block(Block::default().borders(Borders::ALL).title(current_dir_title))
-                .wrap(Wrap { trim: true });
-
-            // Helper: recursively check if a path is under a selected directory
-            fn is_under_selected(selected: &std::collections::HashSet<std::path::PathBuf>, path: &std::path::Path) -> bool {
-                selected.iter().any(|sel| {
-                    sel.is_dir() && path.starts_with(sel) && path != sel
-                })
-            }
-
-            // File list
-            let items: Vec<ListItem> = app.entries.iter().enumerate().map(|(i, entry)| {
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                let md = entry.metadata().ok();
-                let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-                let path = entry.path();
-                let mut style = Style::default();
-                let mut text = file_name.clone();
-                if is_dir {
-                    style = style.fg(Color::Blue);
-                    text.push('/');
-                }
-                let is_selected = app.selected.contains(&path) || is_under_selected(&app.selected, &path);
-                if is_selected {
-                    style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
-                }
-                // If cursor is over a selected directory, use a different color
-                if i == app.cursor {
-                    if is_selected && is_dir {
-                        style = style.fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::REVERSED | Modifier::BOLD);
-                    } else {
-                        style = style.fg(Color::Yellow).add_modifier(Modifier::REVERSED);
-                    }
-                }
-                ListItem::new(text).style(style)
-            }).collect();
-            let files_title = Span::styled(
-                "Files (Space: select, Enter/l/→: open, Backspace/h/←: up)",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            );
-            let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(files_title));
-
-            // Dynamically calculate help lines based on width
-            let max_width = f.size().width.saturating_sub(6) as usize; // account for borders/margins
+            // Build help lines
+            let max_width = f.size().width.saturating_sub(6) as usize;
             let mut help_lines = vec![];
             let mut spans = vec![];
             let mut current_width = 0;
@@ -144,8 +153,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                 ("r", "Toggle relative path"),
                 ("n", "Toggle no path headers"),
             ];
-            let all_help = help_items.iter().chain(extra_help.iter());
-            for (i, (key, desc)) in all_help.enumerate() {
+            for (i, (key, desc)) in help_items.iter().chain(extra_help.iter()).enumerate() {
                 let key_str = key.to_string();
                 let desc_str = format!(": {desc}");
                 let item_width = key_str.len() + desc_str.len() + if i > 0 { 2 } else { 0 };
@@ -166,7 +174,94 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
             if !spans.is_empty() {
                 help_lines.push(Line::from(spans));
             }
-            let help_height = help_lines.len().max(1) as u16 + 2; // +2 for borders
+            let help_height = help_lines.len().max(1) as u16 + 2;
+
+            // Split the terminal into (path bar, file list, help/footer)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                    Constraint::Length(help_height),
+                ])
+                .split(f.size());
+
+            // Determine inner list height (subtract top+bottom border)
+            let inner_list_height = chunks[1].height.saturating_sub(2) as usize;
+            app.ensure_cursor_visible(inner_list_height);
+
+            // Build the path widget
+            let path = if app.no_path {
+                "[No Path Headers]".to_string()
+            } else if app.relative {
+                match app.current_dir.strip_prefix(env::current_dir().unwrap_or_else(|_| PathBuf::from("."))) {
+                    Ok(rel) => rel.display().to_string(),
+                    Err(_) => app.current_dir.display().to_string(),
+                }
+            } else {
+                app.current_dir.display().to_string()
+            };
+            let mut title_str = "Current Directory".to_string();
+            if app.no_path {
+                title_str.push_str(" [n: no path]");
+            } else if app.relative {
+                title_str.push_str(" [r: relative]");
+            }
+            let current_dir_title = Span::styled(
+                title_str,
+                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+            );
+            let path_widget = Paragraph::new(path)
+                .block(Block::default().borders(Borders::ALL).title(current_dir_title))
+                .wrap(Wrap { trim: true });
+
+            // Helper to check nested selection
+            fn is_under_selected(selected: &HashSet<PathBuf>, path: &std::path::Path) -> bool {
+                selected.iter().any(|sel| {
+                    sel.is_dir() && path.starts_with(sel) && path != sel
+                })
+            }
+
+            // Build the file list
+            let visible_items: Vec<ListItem> = app.entries
+                .iter()
+                .enumerate()
+                .skip(app.scroll_offset)
+                .take(inner_list_height)
+                .map(|(i, entry)| {
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    let md = entry.metadata().ok();
+                    let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                    let path = entry.path();
+                    let mut style = Style::default();
+                    let mut text = file_name.clone();
+                    if is_dir {
+                        style = style.fg(Color::Blue);
+                        text.push('/');
+                    }
+                    let is_selected = app.selected.contains(&path) || is_under_selected(&app.selected, &path);
+                    if is_selected {
+                        style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
+                    }
+                    if i == app.cursor {
+                        if is_selected && is_dir {
+                            style = style.fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::REVERSED | Modifier::BOLD);
+                        } else {
+                            style = style.fg(Color::Yellow).add_modifier(Modifier::REVERSED);
+                        }
+                    }
+                    ListItem::new(text).style(style)
+                })
+                .collect();
+            let files_title = Span::styled(
+                "Files (Space: select, Enter/l/→: open, Backspace/h/←: up)",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            );
+            let list = List::new(visible_items)
+                .block(Block::default().borders(Borders::ALL).title(files_title));
+
+            // Build the footer/help widget
             let help_title = Span::styled(
                 "Help",
                 Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
@@ -184,45 +279,32 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                     .wrap(Wrap { trim: true })
             };
 
-            // Layout: dynamically set help/footer height
-            let layout_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(1)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Min(1),
-                    Constraint::Length(help_height),
-                ])
-                .split(f.size());
-
-            f.render_widget(path_widget, layout_chunks[0]);
-            f.render_widget(list, layout_chunks[1]);
-            f.render_widget(footer_widget, layout_chunks[2]);
+            // Render all three panes
+            f.render_widget(path_widget,   chunks[0]);
+            f.render_widget(list,          chunks[1]);
+            f.render_widget(footer_widget, chunks[2]);
         })?;
         terminal.backend_mut().flush()?;
 
-        // Handle input
+        // Input handling
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(KeyEvent { code, .. }) = event::read()? {
                 match code {
-                    KeyCode::Char('q') => {
-                        return Ok(vec![]); // Quit without selection
-                    }
+                    KeyCode::Char('q') => return Ok(vec![]),
                     KeyCode::Char('c') => {
-                        // Confirm selection
                         if app.selected.is_empty() {
                             message = "No files or directories selected!".to_string();
                         } else {
-                            return Ok(app.selected.iter().map(|p| p.to_string_lossy().to_string()).collect());
+                            return Ok(app
+                                .selected
+                                .iter()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .collect());
                         }
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if app.cursor > 0 { app.cursor -= 1; }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if app.cursor + 1 < app.entries.len() { app.cursor += 1; }
-                    }
-                    KeyCode::Char(' ') => {
+                    KeyCode::Up | KeyCode::Char('k')    => app.move_cursor_up(),
+                    KeyCode::Down | KeyCode::Char('j')  => app.move_cursor_down(),
+                    KeyCode::Char(' ')                  => {
                         if let Some(entry) = app.entries.get(app.cursor) {
                             let path = entry.path();
                             if app.selected.contains(&path) {
@@ -237,7 +319,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                             if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
                                 app.current_dir = entry.path();
                                 app.entries = read_dir_sorted(&app.current_dir)?;
-                                app.cursor = 0;
+                                app.reset_cursor();
                             }
                         }
                     }
@@ -245,7 +327,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                         if let Some(parent) = app.current_dir.parent() {
                             app.current_dir = parent.to_path_buf();
                             app.entries = read_dir_sorted(&app.current_dir)?;
-                            app.cursor = 0;
+                            app.reset_cursor();
                         }
                     }
                     KeyCode::Char('r') => {
@@ -264,4 +346,4 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
             }
         }
     }
-} 
+}
