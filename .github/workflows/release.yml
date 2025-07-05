@@ -1,13 +1,11 @@
 name: Cross-compile and Upload Release Assets
 
-
 on:
   workflow_dispatch:
     inputs:
       tag:
         description: 'Release tag (e.g. v0.1.1)'
         required: true
-
 
 permissions:
   contents: write
@@ -42,8 +40,13 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
+      - name: Checkout at the release tag
         uses: actions/checkout@v4
+        with:
+          # fetch all tags and history so we can check out a tag
+          fetch-depth: 0
+          # check out the tag provided as workflow input
+          ref: ${{ github.event.inputs.tag }}
 
       - name: Install cross (if needed)
         if: runner.os == 'Linux'
