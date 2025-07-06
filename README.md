@@ -10,7 +10,11 @@ A command-line tool that aggregates file and directory contents into your clipbo
 
 ## Showcase
 
-[![Watch the demo](assets/thumbnail.png)](assets/cxt.mp4)
+
+
+https://github.com/user-attachments/assets/dca23524-f972-42f3-baf5-d0ee8a0d6394
+
+
 
 *Watch the demo to see `cxt` in action - interactive file selection and clipboard aggregation*
 
