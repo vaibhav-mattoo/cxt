@@ -9,6 +9,12 @@
 
 A command-line tool that aggregates file and directory contents into your clipboard, perfect for providing project context to AI chatbots in your browser like ChatGPT, Perplexity etc.
 
+## Showcase
+
+<video src="assets/cxt.mp4" controls loop width="600"></video>
+
+*Watch the demo to see `cxt` in action - interactive file selection and clipboard aggregation*
+
 ## Use Case
 
 When you're working in the terminal and need to quickly share your project's code structure and contents with an AI assistant, `cxt` makes it effortless. Instead of manually copying files one by one, you can select multiple files and directories, and `cxt` will aggregate all their contents with clear path headers, giving the AI full context of your project structure.
@@ -224,4 +230,4 @@ To uninstall `cxt`, you can run the command:
 curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/cxt/main/uninstall.sh | sh
 ```
 
-If you installed the software using a package manager, remove it using the package manager’s uninstall command.
+If you installed the software using a package manager, remove it using the package manager's uninstall command.
