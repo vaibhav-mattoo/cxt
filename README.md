@@ -219,3 +219,11 @@ cxt -r src/ tests/ README.md
 ## License
 
 MIT License - see LICENSE file for details. 
+
+## Uninstall
+
+To uninstall `cxt`, you can run the command:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/cxt/main/uninstall.sh | sh
+```
