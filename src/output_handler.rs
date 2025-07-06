@@ -19,6 +19,13 @@ impl OutputHandler {
         Self { clipboard }
     }
 
+    /// Helper to check if we are running inside WSL
+    fn is_wsl() -> bool {
+            eprintln!("Detected WSL");
+        env::var("WSL_DISTRO_NAME").is_ok() || env::var("WSL_ENV").is_ok()
+    }
+
+
     /// Copy content to system clipboard, trying popular managers first,
     /// then wl-copy (Wayland), xclip (X11), and finally arboard as a fallback.
     pub fn copy_to_clipboard(&mut self, content: &str) -> Result<()> {
@@ -53,6 +60,19 @@ impl OutputHandler {
         // Linux/Unix: try managers → Wayland → X11 → arboard
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
         {
+            if Self::is_wsl() {
+                let mut child = Command::new("/mnt/c/Windows/System32/clip.exe")
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .with_context(|| "Failed to spawn /mnt/c/Windows/System32/clip.exe. Is this a standard WSL setup?")?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    stdin.write_all(content.as_bytes())
+                        .with_context(|| "Failed to write to clip.exe stdin")?;
+                }
+                if child.wait().with_context(|| "Failed to wait for clip.exe")?.success() {
+                    return Ok(());
+                }
+            }
             let session_type  = env::var("XDG_SESSION_TYPE").unwrap_or_default().to_lowercase();
             let wayland_disp  = env::var("WAYLAND_DISPLAY").unwrap_or_default();
             let x11_disp      = env::var("DISPLAY").unwrap_or_default();
