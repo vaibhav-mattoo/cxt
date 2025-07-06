@@ -2,6 +2,10 @@
 
 [![Crates.io](https://img.shields.io/crates/v/cxt)](https://crates.io/crates/cxt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Homebrew](https://img.shields.io/badge/homebrew-v0.1.0-blue?logo=homebrew)](https://formulae.brew.sh/formula/cxt)
+[![AUR version](https://img.shields.io/aur/version/cxt?logo=arch-linux)](https://aur.archlinux.org/packages/cxt)
+[![Build Status](https://github.com/vaibhav-mattoo/cxt/actions/workflows/ci.yml/badge.svg)](https://github.com/vaibhav-mattoo/cxt/actions)
+[![Last Commit](https://img.shields.io/github/last-commit/vaibhav-mattoo/cxt)](https://github.com/vaibhav-mattoo/cxt/commits)
 
 A command-line tool that aggregates file and directory contents into your clipboard, perfect for providing project context to AI chatbots in your browser like ChatGPT, Perplexity etc.
 
@@ -21,18 +25,21 @@ curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/cxt/main/install.sh 
 
 This script will automatically detect your system and install the appropriate binary.
 
-### From Source
-
-```bash
-git clone https://github.com/vaibhav-mattoo/cxt.git
-cd cxt
-cargo install --path .
-```
+Remember to add `~/.local/bin` to your `$PATH` as the script says, by adding `export PATH="$HOME/.local/bin:$PATH"` in the end of your shell config(~/.bashrc, ~/.zshrc etc).
 
 ### From Cargo
 
 ```bash
 cargo install cxt
+```
+
+### Using homebrew
+
+You can install `cxt` through brew on Linux or macOS by:
+
+```bash
+brew tap vaibhav-mattoo/cxt
+brew install cxt
 ```
 
 ### On Arch Linux (AUR)
@@ -45,12 +52,12 @@ yay -S cxt
 paru -S cxt
 ```
 
-### On Debian-based distributions (.deb package)
+### From Source
 
 ```bash
-wget https://github.com/vaibhav-mattoo/cxt/releases/download/v0.1.0/cxt_0.1.0-1_amd64.deb
-sudo dpkg -i cxt_0.1.0-1_amd64.deb
-sudo apt-get install -f
+git clone https://github.com/vaibhav-mattoo/cxt.git
+cd cxt
+cargo install --path .
 ```
 
 ## Quick Start
@@ -205,17 +212,6 @@ cxt -r main.rs error.log
 cxt -r src/ tests/ README.md
 ```
 
-## Requirements
-
-- Rust 1.74.0 or later
-- For clipboard support:
-  - **Linux**: 
-    - **Wayland**: Any of these clipboard managers: `wl-clipboard`(default), `copyq`, `clipman`, `cliphist`, `gpaste`, `clipse`
-    - **X11**: Any of these clipboard managers: `xclip` (default) `copyq`, `gpaste`, `klipper`
-    - **Universal**: Any of the above clipboard managers which work on both X11 and Wayland
-  - **macOS**: Built-in clipboard support
-  - **Windows**: Built-in clipboard support
-
 ## License
 
 MIT License - see LICENSE file for details. 
@@ -227,3 +223,5 @@ To uninstall `cxt`, you can run the command:
 ```bash
 curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/cxt/main/uninstall.sh | sh
 ```
+
+If you installed the software using a package manager, remove it using the package manager’s uninstall command.
