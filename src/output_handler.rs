@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 pub struct OutputHandler {
     clipboard: Option<Clipboard>,
@@ -15,20 +16,22 @@ pub struct OutputHandler {
 
 impl OutputHandler {
     pub fn new() -> Self {
-        let clipboard = Clipboard::new().ok();
-        Self { clipboard }
+        // Do NOT initialize clipboard here to avoid hangs in WSL.
+        Self { clipboard: None }
     }
 
     /// Helper to check if we are running inside WSL
     fn is_wsl() -> bool {
-            eprintln!("Detected WSL");
         env::var("WSL_DISTRO_NAME").is_ok() || env::var("WSL_ENV").is_ok()
+            || std::fs::read_to_string("/proc/version").map(|v| v.contains("Microsoft")).unwrap_or(false)
     }
-
 
     /// Copy content to system clipboard, trying popular managers first,
     /// then wl-copy (Wayland), xclip (X11), and finally arboard as a fallback.
     pub fn copy_to_clipboard(&mut self, content: &str) -> Result<()> {
+        println!("DEBUG: Starting copy_to_clipboard");
+        let start = Instant::now();
+
         // macOS: use pbcopy
         #[cfg(target_os = "macos")]
         {
@@ -40,17 +43,24 @@ impl OutputHandler {
                 stdin.write_all(content.as_bytes())
                     .with_context(|| "Failed to write to pbcopy stdin")?;
             }
-            child.wait().with_context(|| "Failed to wait for pbcopy")?;
-            return Ok(());
+            if child.wait().with_context(|| "Failed to wait for pbcopy")?.success() {
+                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
+                return Ok(());
+            }
+            Err(anyhow::anyhow!("pbcopy exited with an error."))
         }
 
         // Windows: use arboard
         #[cfg(target_os = "windows")]
         {
+            if self.clipboard.is_none() {
+                self.clipboard = Clipboard::new().ok();
+            }
             if let Some(ref mut clipboard) = self.clipboard {
                 clipboard.set_text(content.to_string())
                     .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
+                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             } else {
                 return Err(anyhow::anyhow!("Clipboard not available on this system"));
@@ -61,17 +71,28 @@ impl OutputHandler {
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
         {
             if Self::is_wsl() {
+                let windows_content = content.replace('\n', "\r\n");
+
+                // Spawn clip.exe as a detached process and do NOT wait for it
                 let mut child = Command::new("/mnt/c/Windows/System32/clip.exe")
                     .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .spawn()
                     .with_context(|| "Failed to spawn /mnt/c/Windows/System32/clip.exe. Is this a standard WSL setup?")?;
+
                 if let Some(mut stdin) = child.stdin.take() {
-                    stdin.write_all(content.as_bytes())
+                    stdin.write_all(windows_content.as_bytes())
                         .with_context(|| "Failed to write to clip.exe stdin")?;
+                    // Explicitly close stdin so clip.exe knows there's no more input
+                    drop(stdin);
                 }
-                if child.wait().with_context(|| "Failed to wait for clip.exe")?.success() {
-                    return Ok(());
-                }
+
+                // Do NOT call child.wait() here!
+                // Optionally, sleep a tiny bit to let the process start
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
+                return Ok(());
             }
             let session_type  = env::var("XDG_SESSION_TYPE").unwrap_or_default().to_lowercase();
             let wayland_disp  = env::var("WAYLAND_DISPLAY").unwrap_or_default();
@@ -101,6 +122,7 @@ impl OutputHandler {
                             .with_context(|| format!("Failed to write to {mgr} stdin"))?;
                     }
                     if child.wait().with_context(|| format!("Failed to wait for {mgr}"))?.success() {
+                        println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                         return Ok(());
                     }
                 }
@@ -120,6 +142,7 @@ impl OutputHandler {
                         .with_context(|| "Failed to write to wl-copy stdin")?;
                 }
                 if child.wait().with_context(|| "Failed to wait for wl-copy")?.success() {
+                    println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                     return Ok(());
                 }
             }
@@ -139,14 +162,19 @@ impl OutputHandler {
                         .with_context(|| "Failed to write to xclip stdin")?;
                 }
                 child.wait().with_context(|| "Failed to wait for xclip")?;
+                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
 
             // 4) Fallback: arboard crate
+            if self.clipboard.is_none() {
+                self.clipboard = Clipboard::new().ok();
+            }
             if let Some(ref mut clipboard) = self.clipboard {
                 clipboard.set_text(content.to_string())
                     .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
+                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
 
@@ -164,10 +192,14 @@ impl OutputHandler {
             target_os = "netbsd", target_os = "macos", target_os = "windows"
         )))]
         {
+            if self.clipboard.is_none() {
+                self.clipboard = Clipboard::new().ok();
+            }
             if let Some(ref mut clipboard) = self.clipboard {
                 clipboard.set_text(content.to_string())
                     .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
+                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
             Err(anyhow::anyhow!("Clipboard not available on this system"))
@@ -184,7 +216,6 @@ impl OutputHandler {
     /// Write content to a file with interactive conflict resolution
     pub fn write_to_file(&self, file_path: &str, content: &str) -> Result<()> {
         let path = Path::new(file_path);
-
         if path.exists() {
             let choice = self.handle_file_conflict(file_path)?;
             match choice {
@@ -242,3 +273,4 @@ enum FileWriteChoice {
     Append,
     Cancel,
 }
+
