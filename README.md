@@ -78,6 +78,8 @@ cargo install --path .
 Launch the interactive file selector:
 
 ```bash
+cxt
+# or
 cxt --tui
 ```
 
