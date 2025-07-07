@@ -34,7 +34,7 @@ curl -sSfL https://raw.githubusercontent.com/vaibhav-mattoo/cxt/main/install.sh 
 
 This script will automatically detect your system and install the appropriate binary.
 
-Remember to add `~/.local/bin` to your `$PATH` as the script says, by adding `export PATH="$HOME/.local/bin:$PATH"` in the end of your shell config(~/.bashrc, ~/.zshrc etc).
+Remember to add `~/.local/bin` to your `$PATH` if prompted by the install script, by adding `export PATH="$HOME/.local/bin:$PATH"` in the end of your shell config(~/.bashrc, ~/.zshrc etc).
 
 ### From Cargo
 
