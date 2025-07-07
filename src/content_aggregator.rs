@@ -2,7 +2,6 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
-use std::time::Instant;
 
 use crate::path_formatter::PathFormatter;
 
@@ -35,32 +34,23 @@ impl ContentAggregator {
     /// Aggregate content from multiple paths
     pub fn aggregate_paths(&mut self, paths: &[String]) -> Result<String> {
         let mut content = String::new();
-        println!("DEBUG: Starting aggregate_paths with {} paths", paths.len());
         for path_str in paths {
             let path = Path::new(path_str);
-            println!("DEBUG: Processing path: {}", path.display());
             if !path.exists() {
                 return Err(anyhow::anyhow!("Path does not exist: {}", path_str));
             }
             if self.is_ignored(path) {
-                println!("DEBUG: Ignored path: {}", path.display());
                 continue;
             }
             if path.is_file() {
-                let file_start = Instant::now();
                 self.aggregate_file(path, &mut content)?;
-                println!("DEBUG: aggregate_file for {} took {:?}", path.display(), file_start.elapsed());
             } else if path.is_dir() {
                 if !self.include_hidden_in_dirs && self.is_hidden_file(path) && !self.is_explicit_path(path, paths) {
-                    println!("DEBUG: Skipping hidden directory: {}", path.display());
                     continue;
                 }
-                let dir_start = Instant::now();
                 self.aggregate_directory(path, &mut content)?;
-                println!("DEBUG: aggregate_directory for {} took {:?}", path.display(), dir_start.elapsed());
             }
         }
-        println!("DEBUG: Finished aggregate_paths, total files processed: {}", self.file_count);
         Ok(content)
     }
 
@@ -71,7 +61,6 @@ impl ContentAggregator {
 
     /// Aggregate content from a single file
     fn aggregate_file(&mut self, path: &Path, content: &mut String) -> Result<()> {
-        let start = Instant::now();
         match fs::read_to_string(path) {
             Ok(file_content) => {
                 if self.include_headers {
@@ -80,7 +69,6 @@ impl ContentAggregator {
                 content.push_str(&file_content);
                 content.push('\n');
                 self.file_count += 1;
-                println!("DEBUG: Read file {} in {:?}", path.display(), start.elapsed());
             },
             Err(e) => {
                 eprintln!("Warning: Failed to read file '{}': {e}", path.display());
@@ -91,7 +79,6 @@ impl ContentAggregator {
 
     /// Aggregate content from a directory recursively
     fn aggregate_directory(&mut self, dir_path: &Path, content: &mut String) -> Result<()> {
-        println!("DEBUG: Starting aggregate_directory for {}", dir_path.display());
         let include_hidden = self.include_hidden_in_dirs;
         let ignore = self.ignore.clone();
         let is_hidden = |path: &Path| {
@@ -122,21 +109,16 @@ impl ContentAggregator {
         for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
             if is_ignored(path) {
-                println!("DEBUG: Ignored path in directory walk: {}", path.display());
                 continue;
             }
             if path.is_dir() {
                 continue;
             }
             if !include_hidden && is_hidden(path) {
-                println!("DEBUG: Skipping hidden file in directory: {}", path.display());
                 continue;
             }
-                    let file_start = Instant::now();
             self.aggregate_file(path, content)?;
-            println!("DEBUG: aggregate_file in directory for {} took {:?}", path.display(), file_start.elapsed());
         }
-        println!("DEBUG: Finished aggregate_directory for {}", dir_path.display());
         Ok(())
     }
 

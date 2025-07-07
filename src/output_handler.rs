@@ -8,7 +8,6 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
-use std::time::Instant;
 
 pub struct OutputHandler {
     clipboard: Option<Clipboard>,
@@ -29,8 +28,6 @@ impl OutputHandler {
     /// Copy content to system clipboard, trying popular managers first,
     /// then wl-copy (Wayland), xclip (X11), and finally arboard as a fallback.
     pub fn copy_to_clipboard(&mut self, content: &str) -> Result<()> {
-        println!("DEBUG: Starting copy_to_clipboard");
-        let start = Instant::now();
 
         // macOS: use pbcopy
         #[cfg(target_os = "macos")]
@@ -44,7 +41,6 @@ impl OutputHandler {
                     .with_context(|| "Failed to write to pbcopy stdin")?;
             }
             if child.wait().with_context(|| "Failed to wait for pbcopy")?.success() {
-                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
             Err(anyhow::anyhow!("pbcopy exited with an error."))
@@ -60,7 +56,6 @@ impl OutputHandler {
                 clipboard.set_text(content.to_string())
                     .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
-                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             } else {
                 return Err(anyhow::anyhow!("Clipboard not available on this system"));
@@ -91,7 +86,6 @@ impl OutputHandler {
                 // Do NOT call child.wait() here!
                 // Optionally, sleep a tiny bit to let the process start
                 std::thread::sleep(std::time::Duration::from_millis(50));
-                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
             let session_type  = env::var("XDG_SESSION_TYPE").unwrap_or_default().to_lowercase();
@@ -122,7 +116,6 @@ impl OutputHandler {
                             .with_context(|| format!("Failed to write to {mgr} stdin"))?;
                     }
                     if child.wait().with_context(|| format!("Failed to wait for {mgr}"))?.success() {
-                        println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                         return Ok(());
                     }
                 }
@@ -142,7 +135,6 @@ impl OutputHandler {
                         .with_context(|| "Failed to write to wl-copy stdin")?;
                 }
                 if child.wait().with_context(|| "Failed to wait for wl-copy")?.success() {
-                    println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                     return Ok(());
                 }
             }
@@ -162,7 +154,6 @@ impl OutputHandler {
                         .with_context(|| "Failed to write to xclip stdin")?;
                 }
                 child.wait().with_context(|| "Failed to wait for xclip")?;
-                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
 
@@ -174,7 +165,6 @@ impl OutputHandler {
                 clipboard.set_text(content.to_string())
                     .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
-                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
 
@@ -199,7 +189,6 @@ impl OutputHandler {
                 clipboard.set_text(content.to_string())
                     .with_context(|| "Failed to copy content to clipboard via arboard")?;
                 thread::sleep(Duration::from_millis(500));
-                println!("DEBUG: copy_to_clipboard completed in {:?}", start.elapsed());
                 return Ok(());
             }
             Err(anyhow::anyhow!("Clipboard not available on this system"))
