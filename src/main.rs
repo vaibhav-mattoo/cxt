@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use clap::CommandFactory;
 
 mod cli;
 mod content_aggregator;
@@ -22,7 +21,7 @@ fn main() -> Result<()> {
     }
 
     // Determine paths: from TUI or CLI
-    let paths: Vec<String> = if args.tui {
+    let paths: Vec<String> = if args.tui || args.paths.is_empty() {
         let selected = tui::run_tui()?;
         if selected.is_empty() {
             println!("No files or directories selected. Exiting.");
@@ -30,10 +29,6 @@ fn main() -> Result<()> {
         }
         selected
     } else {
-        if args.paths.is_empty() {
-            Args::command().print_help()?;
-            std::process::exit(1);
-        }
         args.paths.clone()
     };
 

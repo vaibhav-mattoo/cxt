@@ -3,14 +3,7 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::tempdir;
 
-#[test]
-fn shows_help_when_no_args() {
-    let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["--ci"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("Usage:"));
-}
+
 
 #[test]
 fn error_on_conflicting_flags() {

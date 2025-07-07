@@ -9,7 +9,7 @@ use clap::Parser;
 )]
 pub struct Args {
     /// File and/or directory paths to aggregate
-    #[arg(required_unless_present = "tui", help = "File and/or directory paths to aggregate")]
+    #[arg(help = "File and/or directory paths to aggregate")]
     pub paths: Vec<String>,
 
     /// Print content to stdout
