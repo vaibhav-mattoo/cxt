@@ -12,7 +12,10 @@ A command-line tool that aggregates file and directory contents into your clipbo
 
 
 
-https://github.com/user-attachments/assets/dca23524-f972-42f3-baf5-d0ee8a0d6394
+
+https://github.com/user-attachments/assets/18fa3c3c-0d87-442e-bb30-cbfe36e0e116
+
+
 
 
 
