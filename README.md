@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/cxt)](https://crates.io/crates/cxt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Homebrew Tap](https://img.shields.io/badge/homebrew--tap-v0.1.2-blue?logo=homebrew)](https://github.com/vaibhav-mattoo/homebrew-cxt)
+[![Homebrew Tap](https://img.shields.io/badge/homebrew--tap-v0.1.3-blue?logo=homebrew)](https://github.com/vaibhav-mattoo/homebrew-cxt)
 [![AUR version](https://img.shields.io/aur/version/cxt?logo=arch-linux)](https://aur.archlinux.org/packages/cxt)
 [![Last Commit](https://img.shields.io/github/last-commit/vaibhav-mattoo/cxt)](https://github.com/vaibhav-mattoo/cxt/commits)
 
