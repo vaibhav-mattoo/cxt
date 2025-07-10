@@ -86,6 +86,8 @@ cxt --tui
 Navigate with arrow keys or `hjkl`, select files/directories with `Space`, and confirm with `c`.
 
 ### Command Line Mode
+Wildcard functionality is now supported! You can use patterns like "*.py" or "src/**/*.rs".
+
 Copy specific files to clipboard:
 
 ```bash

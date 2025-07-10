@@ -21,6 +21,7 @@ use std::{
     time::Duration,
 };
 use std::io::Write;
+use walkdir;
 
 pub fn run_tui() -> Result<Vec<String>> {
     // Setup terminal
@@ -45,6 +46,7 @@ struct AppState {
     scroll_offset: usize,
     visible_height: usize,
     selected: HashSet<PathBuf>,
+    deselected: HashSet<PathBuf>,
     relative: bool,
     no_path: bool,
 }
@@ -60,6 +62,7 @@ impl AppState {
             scroll_offset: 0,
             visible_height: 10,
             selected: HashSet::new(),
+            deselected: HashSet::new(),
             relative: false,
             no_path: false,
         })
@@ -142,6 +145,53 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
         ("q", "Quit"),
     ];
 
+    // Move is_under_selected here so it's accessible in both draw and event handler
+    fn is_under_selected(selected: &HashSet<PathBuf>, deselected: &HashSet<PathBuf>, path: &std::path::Path) -> bool {
+        selected.iter().any(|sel| {
+            sel.is_dir() && path.starts_with(sel) && path != sel && !deselected.contains(path)
+        })
+    }
+
+    // Function to get the final list of selected paths
+    fn get_final_selected_paths(selected: &HashSet<PathBuf>, deselected: &HashSet<PathBuf>) -> Vec<String> {
+        let mut final_paths = Vec::new();
+        
+        for path in selected {
+            if !deselected.contains(path) {
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    if metadata.is_dir() {
+                        // For directories, collect all files recursively
+                        let entries: Vec<String> = walkdir::WalkDir::new(path)
+                            .follow_links(true)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.path() != path) // Exclude the directory itself
+                            .filter(|e| !deselected.contains(e.path())) // Exclude explicitly deselected paths
+                            .filter(|e| {
+                                // Check if any ancestor is deselected
+                                let mut current = e.path();
+                                while let Some(parent) = current.parent() {
+                                    if deselected.contains(&parent.to_path_buf()) {
+                                        return false;
+                                    }
+                                    current = parent;
+                                }
+                                true
+                            })
+                            .map(|e| e.path().to_string_lossy().to_string())
+                            .collect();
+                        final_paths.extend(entries);
+                    } else {
+                        // For files, add them directly
+                        final_paths.push(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+        
+        final_paths
+    }
+
     loop {
         terminal.draw(|f| {
             // Build help lines
@@ -216,13 +266,6 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                 .block(Block::default().borders(Borders::ALL).title(current_dir_title))
                 .wrap(Wrap { trim: true });
 
-            // Helper to check nested selection
-            fn is_under_selected(selected: &HashSet<PathBuf>, path: &std::path::Path) -> bool {
-                selected.iter().any(|sel| {
-                    sel.is_dir() && path.starts_with(sel) && path != sel
-                })
-            }
-
             // Build the file list
             let visible_items: Vec<ListItem> = app.entries
                 .iter()
@@ -240,7 +283,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                         style = style.fg(Color::Blue);
                         text.push('/');
                     }
-                    let is_selected = app.selected.contains(&path) || is_under_selected(&app.selected, &path);
+                    let is_selected = (app.selected.contains(&path) && !app.deselected.contains(&path)) || is_under_selected(&app.selected, &app.deselected, &path);
                     if is_selected {
                         style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
                     }
@@ -295,20 +338,28 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                         if app.selected.is_empty() {
                             message = "No files or directories selected!".to_string();
                         } else {
-                            return Ok(app
-                                .selected
-                                .iter()
-                                .map(|p| p.to_string_lossy().to_string())
-                                .collect());
+                            return Ok(get_final_selected_paths(&app.selected, &app.deselected));
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k')    => app.move_cursor_up(),
                     KeyCode::Down | KeyCode::Char('j')  => app.move_cursor_down(),
-                    KeyCode::Char(' ')                  => {
+                    KeyCode::Char(' ') => {
                         if let Some(entry) = app.entries.get(app.cursor) {
                             let path = entry.path();
+                            let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
                             if app.selected.contains(&path) {
+                                // Deselecting a directory: remove all its children from deselected
                                 app.selected.remove(&path);
+                                if is_dir {
+                                    app.deselected.retain(|p| !p.starts_with(&path));
+                                }
+                            } else if is_under_selected(&app.selected, &app.deselected, &path) {
+                                // If this is a child of a selected dir, toggle in deselected
+                                if app.deselected.contains(&path) {
+                                    app.deselected.remove(&path);
+                                } else {
+                                    app.deselected.insert(path);
+                                }
                             } else {
                                 app.selected.insert(path);
                             }

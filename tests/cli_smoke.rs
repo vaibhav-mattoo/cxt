@@ -91,4 +91,60 @@ fn writes_content_to_file() {
 
     let content = fs::read_to_string(&output_file).unwrap();
     assert!(content.contains("Test content"));
-} 
+}
+
+#[test]
+fn handles_wildcard_patterns() {
+    let dir = tempdir().unwrap();
+    let file1 = dir.path().join("test1.py");
+    let file2 = dir.path().join("test2.py");
+    let file3 = dir.path().join("test.txt");
+    
+    fs::write(&file1, "Python file 1").unwrap();
+    fs::write(&file2, "Python file 2").unwrap();
+    fs::write(&file3, "Text file").unwrap();
+
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["--ci", "-p", &format!("{}/*.py", dir.path().to_str().unwrap())])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Python file 1"))
+        .stdout(predicates::str::contains("Python file 2"))
+        .stdout(predicates::str::contains("Text file").not());
+}
+
+#[test]
+fn handles_nested_wildcard_patterns() {
+    let dir = tempdir().unwrap();
+    let subdir = dir.path().join("subdir");
+    fs::create_dir(&subdir).unwrap();
+    
+    let file1 = subdir.join("app.cpp");
+    let file2 = subdir.join("main.cpp");
+    let file3 = subdir.join("helper.h");
+    
+    fs::write(&file1, "C++ app file").unwrap();
+    fs::write(&file2, "C++ main file").unwrap();
+    fs::write(&file3, "Header file").unwrap();
+
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["--ci", "-p", &format!("{}/*/*.cpp", dir.path().to_str().unwrap())])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("C++ app file"))
+        .stdout(predicates::str::contains("C++ main file"))
+        .stdout(predicates::str::contains("Header file").not());
+}
+
+#[test]
+fn handles_no_matching_files() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("test.txt");
+    fs::write(&file, "Test content").unwrap();
+
+    let mut cmd = Command::cargo_bin("cxt").unwrap();
+    cmd.args(["--ci", &format!("{}/*.nonexistent", dir.path().to_str().unwrap())])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No files found matching the specified patterns"));
+}
