@@ -43,13 +43,13 @@ impl ContentAggregator {
 
             file_count: 0,
 
-            /// the ignore argument is a vector of strings
-            /// we need a vector of std::Path::PathBuf
-            /// into_iter takes ownership of original vector and yields each element one by one
-            /// then map transforms every element with the PathBuf::from operation
-            ///     PathBuf::from converts a String (or &str) into a PathBuf (better path
-            ///         representation for file system paths)
-            /// .collect makes converted iterators back into a collection (vector)
+            // the ignore argument is a vector of strings
+            // we need a vector of std::Path::PathBuf
+            // into_iter takes ownership of original vector and yields each element one by one
+            // then map transforms every element with the PathBuf::from operation
+            //     PathBuf::from converts a String (or &str) into a PathBuf (better path
+            //         representation for file system paths)
+            // .collect makes converted iterators back into a collection (vector)
 
             ignore: ignore.into_iter().map(std::path::PathBuf::from).collect(),
         }
@@ -58,17 +58,17 @@ impl ContentAggregator {
     /// Check if a path should be ignored
     fn is_ignored(&self, path: &Path) -> bool {
 
-        /// we take the ignore vector of PathBuf and create iterators
-        ///     these yield references to each ignored path in the vector
-        /// .any returns true if the closure returns true for ANY element in the iterator
-        ///
-        /// closure is an anonymous function you can write inline
-        ///     captures all variables from its environment
-        ///     |...| have the arguments for this anonymous function
-        ///     {...} has the body of the closure (code it executes)
-        ///
-        ///     this function returns true if the passed path is either a file in the ignored path
-        ///     or the ignored path is its prefix (starts with the ignored path)
+        // we take the ignore vector of PathBuf and create iterators
+        //     these yield references to each ignored path in the vector
+        // .any returns true if the closure returns true for ANY element in the iterator
+        //
+        // closure is an anonymous function you can write inline
+        //     captures all variables from its environment
+        //     |...| have the arguments for this anonymous function
+        //     {...} has the body of the closure (code it executes)
+        //
+        //     this function returns true if the passed path is either a file in the ignored path
+        //     or the ignored path is its prefix (starts with the ignored path)
 
         self.ignore.iter().any(|ignore_path| {
             path == ignore_path || path.starts_with(ignore_path)
@@ -142,24 +142,24 @@ impl ContentAggregator {
     pub fn aggregate_paths(&mut self, paths: &[String]) -> Result<String> {
         let mut content = String::new();
 
-        /// for every string in the paths string slice we convert it to a Path class
-        ///     then we check if the path we made exists (return anyhow error if not)
-        ///     then we check if the path is to be ignored in which case we don't handle it
-        ///     if the path is a file then we dispatch to the aggregrate file handler
-        ///     else if the path is a directory:
-        ///         we already checked the ignore path so the only case where we dont want the path
-        ///         is if --hidden is not passed and this is hidden.
-        ///         but if the user explicitly provided a hidden path then even if hidden we still
-        ///         have to take so we have a check for that too.
-        ///     otherwise dispatch to aggregate directory handler for that path
-        ///
-        ///     The ? operator propogates the error upwards if the function call errors out
-        ///      Since the Return enum is used, if the function call errors out then Err will come
-        ///      This happens immediately and the loop does not keep goinf and error is returned
-        ///      Right now the ? is pointless since both functions deal with errors internally
-        ///      but good to keep for futureproofing
-        ///
-        ///      If the loop completes that means no errors happened so we return Ok(Content)
+        // for every string in the paths string slice we convert it to a Path class
+        //     then we check if the path we made exists (return anyhow error if not)
+        //     then we check if the path is to be ignored in which case we don't handle it
+        //     if the path is a file then we dispatch to the aggregrate file handler
+        //     else if the path is a directory:
+        //         we already checked the ignore path so the only case where we dont want the path
+        //         is if --hidden is not passed and this is hidden.
+        //         but if the user explicitly provided a hidden path then even if hidden we still
+        //         have to take so we have a check for that too.
+        //     otherwise dispatch to aggregate directory handler for that path
+        //
+        //     The ? operator propogates the error upwards if the function call errors out
+        //      Since the Return enum is used, if the function call errors out then Err will come
+        //      This happens immediately and the loop does not keep goinf and error is returned
+        //      Right now the ? is pointless since both functions deal with errors internally
+        //      but good to keep for futureproofing
+        //
+        //      If the loop completes that means no errors happened so we return Ok(Content)
 
         for path_str in paths {
             let path = Path::new(path_str);
@@ -187,9 +187,9 @@ impl ContentAggregator {
     /// this is checking function it doesn't take mutable struct since it does not make changes
 
     fn is_explicit_path(&self, path: &Path, input_paths: &[String]) -> bool {
-        /// for each of the input paths slice of strings we make an iter for the strings
-        /// then we use an any function to check out closure
-        /// in the closure we make the strings into a path and check if the path is present.
+        // for each of the input paths slice of strings we make an iter for the strings
+        // then we use an any function to check out closure
+        // in the closure we make the strings into a path and check if the path is present.
 
         input_paths.iter().any(|p| Path::new(p) == path)
     }
@@ -203,18 +203,18 @@ impl ContentAggregator {
 
     fn aggregate_file(&mut self, path: &Path, content: &mut String) -> Result<()> {
         
-        /// the read_to_string function tries to read the entire content of the file at the path
-        /// it returns a Result<String, std::io::Error> which we need to check with match
+        // the read_to_string function tries to read the entire content of the file at the path
+        // it returns a Result<String, std::io::Error> which we need to check with match
 
         match fs::read_to_string(path) {
 
-            /// if the file was read successfully:
-            ///     check if we need to include the header
-            ///         if yes, use te path formatting to format the path
-            ///         done using the relative/absolute thing in ./path_formatter.rs
-            ///     then put in the entire successfully read content.
-            ///     after that we put a new line if the file doesnt already end with one
-            ///     since the file is new done, increase file count
+            // if the file was read successfully:
+            //     check if we need to include the header
+            //         if yes, use te path formatting to format the path
+            //         done using the relative/absolute thing in ./path_formatter.rs
+            //     then put in the entire successfully read content.
+            //     after that we put a new line if the file doesnt already end with one
+            //     since the file is new done, increase file count
 
             Ok(file_content) => {
                 if self.include_headers {
@@ -227,34 +227,34 @@ impl ContentAggregator {
                 self.file_count += 1;
             },
 
-            /// if there was a problem reading (like non UTF-8 characters then eprintln the error)
+            // if there was a problem reading (like non UTF-8 characters then eprintln the error)
             Err(e) => {
                 eprintln!("Warning: Failed to read file '{}': {e}", path.display());
             }
         }
 
-        /// since we already modified content or printed out an error if the file couldnt be read
-        /// we want to continue the reading of next files so we always send out an ok so we dont
-        /// terminate
+        // since we already modified content or printed out an error if the file couldnt be read
+        // we want to continue the reading of next files so we always send out an ok so we dont
+        // terminate
         Ok(())
     }
 
     /// Aggregate content from a directory recursively
     fn aggregate_directory(&mut self, dir_path: &Path, content: &mut String) -> Result<()> {
 
-        /// we are making local copies of include_hidden and ignore
-        /// this makes it easier for closures to use this stuff
-        /// closures borrow by reerencing instead of moving so direct use also fine, just cleaner
+        // we are making local copies of include_hidden and ignore
+        // this makes it easier for closures to use this stuff
+        // closures borrow by reerencing instead of moving so direct use also fine, just cleaner
 
         let include_hidden = self.include_hidden_in_dirs;
         let ignore = self.ignore.clone();
 
-        /// here path.file_name() takes the final component of the path (file/dir name)
-        /// and_then() is called which applies the closure if it exists
-        /// to_str converst the Option<&OsStr> into Some(&str) which represents OS string in UTF-8
-        /// map takes this name and returns true if it starts with . (indicating hidden)
-        /// unwrap_or extracts the bool value from the Some(true) or Some(false)
-        /// if any step returned error then it defaults to false
+        // here path.file_name() takes the final component of the path (file/dir name)
+        // and_then() is called which applies the closure if it exists
+        // to_str converst the Option<&OsStr> into Some(&str) which represents OS string in UTF-8
+        // map takes this name and returns true if it starts with . (indicating hidden)
+        // unwrap_or extracts the bool value from the Some(true) or Some(false)
+        // if any step returned error then it defaults to false
 
 
         let is_hidden = |path: &Path| {
@@ -269,19 +269,19 @@ impl ContentAggregator {
             ignore.iter().any(|ignore_path| path == ignore_path || path.starts_with(ignore_path))
         };
 
-        /// WalkDir::new(dir_path) new directory walker which recursively explores dir_path
-        /// follow_links(true) configures walker to treat symbolic links as real 
+        // WalkDir::new(dir_path) new directory walker which recursively explores dir_path
+        // follow_links(true) configures walker to treat symbolic links as real 
         // WARNING: following symbolic link can cause loop
-        /// filter_entry is applies this filtering closure on every entry in the walk
-        ///     for each entry we check if the path is in ignored and return false
-        ///         this causes path to be ignored
-        ///     if the path is the dir path then we include it in the results and descend into it
-        ///         this is necessary for the walk to start
-        ///     we only include hidden if hidden is needed
-        ///     if no problem then include by default
-        ///
-        ///     the final output walker is an iterator that has all the files, directories selected
-        ///     filtering at runtime allows us to skip exploring the subtree
+        // filter_entry is applies this filtering closure on every entry in the walk
+        //     for each entry we check if the path is in ignored and return false
+        //         this causes path to be ignored
+        //     if the path is the dir path then we include it in the results and descend into it
+        //         this is necessary for the walk to start
+        //     we only include hidden if hidden is needed
+        //     if no problem then include by default
+        //
+        //     the final output walker is an iterator that has all the files, directories selected
+        //     filtering at runtime allows us to skip exploring the subtree
 
         let walker = WalkDir::new(dir_path)
             .follow_links(true)
@@ -300,12 +300,12 @@ impl ContentAggregator {
                 }
             });
 
-        /// for each item in walker the filter map takes the iterators
-        /// and returns e.ok() which are the iterators which have e.ok() true
-        /// this means the ones which dont have permission denied or broken symlink
-        /// for these we check if it is a directory since the walker already has files
-        /// we can skip the directories
-        /// similarly we have second checks for ignored and hidden
+        // for each item in walker the filter map takes the iterators
+        // and returns e.ok() which are the iterators which have e.ok() true
+        // this means the ones which dont have permission denied or broken symlink
+        // for these we check if it is a directory since the walker already has files
+        // we can skip the directories
+        // similarly we have second checks for ignored and hidden
         // NOTE: The tests for ignored and hidden can be removed here since already done
         // in aggregate paths
 

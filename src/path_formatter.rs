@@ -18,19 +18,19 @@ impl PathFormatter {
     /// Format a path for display in the output
     pub fn format_path(&self, path: &Path) -> String {
 
-        /// if no path then we just return an empty string
+        // if no path then we just return an empty string
         if self.no_path {
             return String::new();
         }
 
-        /// get formatted_path from helper function
+        // get formatted_path from helper function
         let formatted_path = if self.relative {
             self.get_relative_path(path)
         } else {
             self.get_absolute_path(path)
         };
 
-        /// the final output on top of file
+        // the final output on top of file
         format!("--- File: {formatted_path} ---\n")
     }
 

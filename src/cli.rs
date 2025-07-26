@@ -43,7 +43,7 @@ impl Args {
         if self.relative && self.no_path {
             return Err("Cannot use --relative and --no-path together".to_string());
         }
-        /// multiple files in ignore path provided as arguments like "cxt target_dir src/* -i dir -i file" should be ignored
+        // multiple files in ignore path provided as arguments like "cxt target_dir src/* -i dir -i file" should be ignored
         for ignore_path in &self.ignore {
             if !std::path::Path::new(ignore_path).exists() {
                 return Err(format!("Ignore path does not exist: {ignore_path}"));

@@ -24,9 +24,9 @@ impl OutputHandler {
     /// Helper to check if we are running inside WSL
     fn is_wsl() -> bool {
         
-        /// check if in WSL by seeing if WSL_DISTRO_NAME or WSL_ENV variables are set
-        /// also if on reading /proc/version we map to run closure which checks if Microsoft
-        /// if any errors in process assume not WSL
+        // check if in WSL by seeing if WSL_DISTRO_NAME or WSL_ENV variables are set
+        // also if on reading /proc/version we map to run closure which checks if Microsoft
+        // if any errors in process assume not WSL
 
         env::var("WSL_DISTRO_NAME").is_ok() || env::var("WSL_ENV").is_ok()
             || std::fs::read_to_string("/proc/version").map(|v| v.contains("Microsoft")).unwrap_or(false)
@@ -39,33 +39,33 @@ impl OutputHandler {
 
         // macOS: use pbcopy
 
-        /// this is a Rust conditional compilation attribute
-        /// tells the compiler to include or exclude based on target operating system
-        /// this will only be compiled on macos
+        // this is a Rust conditional compilation attribute
+        // tells the compiler to include or exclude based on target operating system
+        // this will only be compiled on macos
         #[cfg(target_os = "macos")]
         {
-            /// macos has native pbcopy command line tool to copy text
-            /// we spawn pbcopy with the child process stdin to be piped
-            ///     this allows us to control the stdin for it
-            ///     without this we would have to read input from our terminal
-            /// with_context uses anyhow which allows custom error message if spawn fails
-            /// ? operator causes a early return if spawn fails
+            // macos has native pbcopy command line tool to copy text
+            // we spawn pbcopy with the child process stdin to be piped
+            //     this allows us to control the stdin for it
+            //     without this we would have to read input from our terminal
+            // with_context uses anyhow which allows custom error message if spawn fails
+            // ? operator causes a early return if spawn fails
 
             let mut child = Command::new("pbcopy")
                 .stdin(Stdio::piped())
                 .spawn()
                 .with_context(|| "Failed to spawn pbcopy")?;
 
-            /// the stdin field on child is Option and take replaces it inside child with none and
-            /// give it to us. If stdin was Some() then it is destructured and assigned
-            ///     if it is None, the block is skipped
-            ///
-            /// write_all writes all the bytes of string content into stdin.
-            /// the as_bytes converts the &str into byte slice &[u8] for write_all
-            ///
-            /// the wait() blocks our thread waiting for the child process to finish execution
-            ///     this returns a Result<ExitStatus, Error>; the ExitStatus indicates how the child process exited
-            ///     .success() checks if child process exited successfully
+            // the stdin field on child is Option and take replaces it inside child with none and
+            // give it to us. If stdin was Some() then it is destructured and assigned
+            //     if it is None, the block is skipped
+            //
+            // write_all writes all the bytes of string content into stdin.
+            // the as_bytes converts the &str into byte slice &[u8] for write_all
+            //
+            // the wait() blocks our thread waiting for the child process to finish execution
+            //     this returns a Result<ExitStatus, Error>; the ExitStatus indicates how the child process exited
+            //     .success() checks if child process exited successfully
 
             if let Some(mut stdin) = child.stdin.take() {
                 stdin.write_all(content.as_bytes())
@@ -82,12 +82,12 @@ impl OutputHandler {
         {
             if self.clipboard.is_none() {
                 
-                ///lazy clipboard initialization with Clipboard::new()
+                //lazy clipboard initialization with Clipboard::new()
                 self.clipboard = Clipboard::new().ok();
 
             }
             if let Some(ref mut clipboard) = self.clipboard {
-                /// the set_text on clipboard instance copies the content
+                // the set_text on clipboard instance copies the content
                 // NOTE: 500 ms needed for clipboard to not drop content immediately
                 // Might not need this but keeping it for now as it works
                 clipboard.set_text(content.to_string())
@@ -102,17 +102,17 @@ impl OutputHandler {
         // Linux/Unix: try arboard first, then managers → Wayland → X11
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
         {
-            /// Handler for WSL where need to use clip.exe instead of linux clipboards
+            // Handler for WSL where need to use clip.exe instead of linux clipboards
             if Self::is_wsl() {
 
-                /// Windows programs expect \r\n as line endings
-                /// so this ensures Windows software receives clipboard text formatted correctly.
+                // Windows programs expect \r\n as line endings
+                // so this ensures Windows software receives clipboard text formatted correctly.
                 let windows_content = content.replace('\n', "\r\n");
 
-                /// Spawn clip.exe as a detached process and do NOT wait for it
-                /// In WSL Windows file system mounted on /mnt/c
-                /// we need to access native Windows path from Linux
-                /// we configure the stdin to be piped and discard tbe std out and stderr
+                // Spawn clip.exe as a detached process and do NOT wait for it
+                // In WSL Windows file system mounted on /mnt/c
+                // we need to access native Windows path from Linux
+                // we configure the stdin to be piped and discard tbe std out and stderr
 
                 let mut child = Command::new("/mnt/c/Windows/System32/clip.exe")
                     .stdin(Stdio::piped())
@@ -125,8 +125,8 @@ impl OutputHandler {
                     stdin.write_all(windows_content.as_bytes())
                         .with_context(|| "Failed to write to clip.exe stdin")?;
                     // Explicitly close stdin so clip.exe knows there's no more input
-                    /// for clip.exe we need to manually tell it no more input coming so it
-                    /// proceeds
+                    // for clip.exe we need to manually tell it no more input coming so it
+                    // proceeds
                     drop(stdin);
                 }
 
@@ -134,27 +134,27 @@ impl OutputHandler {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 return Ok(());
             }
-            /// tells you wayland or X11, display server type
+            // tells you wayland or X11, display server type
             let session_type  = env::var("XDG_SESSION_TYPE").unwrap_or_default().to_lowercase();
 
-            /// wayland display socket name, non-empty if wayland running
+            // wayland display socket name, non-empty if wayland running
             let wayland_disp  = env::var("WAYLAND_DISPLAY").unwrap_or_default();
 
-            /// X11 display string non-empty for X11 running
+            // X11 display string non-empty for X11 running
             let x11_disp      = env::var("DISPLAY").unwrap_or_default();
 
             // On Wayland, use wl-copy first, then try other managers, then arboard as last resort
 
             if session_type == "wayland" || !wayland_disp.is_empty() {
 
-                /// run "which wl-copy" and check if output comes successfully without printing
+                // run "which wl-copy" and check if output comes successfully without printing
                 let have_wl_copy = Command::new("which").arg("wl-copy")
                     .stdout(Stdio::null()).stderr(Stdio::null())
                     .status().map(|s| s.success()).unwrap_or(false);
 
 
                 if have_wl_copy {
-                    /// spawn wlcopy with piped stdio if present
+                    // spawn wlcopy with piped stdio if present
                     let mut child = Command::new("wl-copy")
                         .stdin(Stdio::piped())
                         .spawn()
@@ -169,11 +169,11 @@ impl OutputHandler {
                 }
 
                 // Try other managers
-                /// defines an array of tuples which has clipboard managers and args
-                /// &str representing name of manager
-                /// reference to a slice of string slices
-                /// [..] is full slice syntax which converts array literal into slice reference
-                /// &["add", "-"][..] creates a slice reference for the array ["add", "-"]
+                // defines an array of tuples which has clipboard managers and args
+                // &str representing name of manager
+                // reference to a slice of string slices
+                // [..] is full slice syntax which converts array literal into slice reference
+                // &["add", "-"][..] creates a slice reference for the array ["add", "-"]
 
                 let clipboard_managers = [
                     ("copyq", &["add", "-"][..]),
