@@ -8,27 +8,21 @@ use clap::Parser;
     long_about = "cxt is a command-line tool that aggregates the contents of specified files and directories into a single string, then directs it to the clipboard, a file, or standard output."
 )]
 pub struct Args {
-    /// File and/or directory paths to aggregate
     #[arg(help = "File and/or directory paths to aggregate")]
     pub paths: Vec<String>,
 
-    /// Print content to stdout
     #[arg(short, long, help = "Print content to stdout")]
     pub print: bool,
 
-    /// Write content to specified file
     #[arg(short, long, help = "Write content to specified file")]
     pub write: Option<String>,
 
-    /// Use relative paths in headers
     #[arg(short, long, help = "Use relative paths in headers")]
     pub relative: bool,
 
-    /// Disable file path headers
     #[arg(short, long, help = "Disable file path headers")]
     pub no_path: bool,
 
-    /// Include hidden files when walking directories
     #[arg(long, help = "Include hidden files when walking directories")]
     pub hidden: bool,
 
@@ -36,13 +30,11 @@ pub struct Args {
     #[arg(long, hide = true)]
     pub ci: bool,
 
-    /// Launch Terminal User Interface (TUI) mode
     #[arg(short, long, help = "Launch interactive TUI file selector")]
     pub tui: bool,
 
-    /// Ignore a file or directory
-    #[arg(short, long, help = "Ignore a file or directory", value_name = "PATH")]
-    pub ignore: Option<String>,
+    #[arg(short, long, help = "Ignore a file or directory", value_name = "PATH", action = clap::ArgAction::Append)]
+    pub ignore: Vec<String>,
 }
 
 impl Args {
@@ -51,7 +43,8 @@ impl Args {
         if self.relative && self.no_path {
             return Err("Cannot use --relative and --no-path together".to_string());
         }
-        if let Some(ignore_path) = &self.ignore {
+        /// multiple files in ignore path provided as arguments like "cxt target_dir src/* -i dir -i file" should be ignored
+        for ignore_path in &self.ignore {
             if !std::path::Path::new(ignore_path).exists() {
                 return Err(format!("Ignore path does not exist: {ignore_path}"));
             }

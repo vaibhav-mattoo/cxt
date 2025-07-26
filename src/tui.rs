@@ -1,6 +1,6 @@
 use anyhow::{Result, Context};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     execute as crossterm_execute,
 };
@@ -157,7 +157,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
         let mut final_paths = Vec::new();
         
         for path in selected {
-            if !deselected.contains(path) {
+            if !deselected.iter().any(|d| path.starts_with(d)) {
                 if let Ok(metadata) = std::fs::metadata(path) {
                     if metadata.is_dir() {
                         // For directories, collect all files recursively
@@ -166,18 +166,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                             .into_iter()
                             .filter_map(|e| e.ok())
                             .filter(|e| e.path() != path) // Exclude the directory itself
-                            .filter(|e| !deselected.contains(e.path())) // Exclude explicitly deselected paths
-                            .filter(|e| {
-                                // Check if any ancestor is deselected
-                                let mut current = e.path();
-                                while let Some(parent) = current.parent() {
-                                    if deselected.contains(&parent.to_path_buf()) {
-                                        return false;
-                                    }
-                                    current = parent;
-                                }
-                                true
-                            })
+                            .filter(|e| !deselected.iter().any(|d| e.path().starts_with(d))) // Exclude any path under a deselected path
                             .map(|e| e.path().to_string_lossy().to_string())
                             .collect();
                         final_paths.extend(entries);
@@ -190,6 +179,73 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
         }
         
         final_paths
+    }
+
+    fn handle_key_event(app: &mut AppState, key_event: KeyEvent, message: &mut String) -> Option<Vec<String>> {
+        if key_event.kind != KeyEventKind::Press {
+            return None;
+        }
+        match key_event.code {
+            KeyCode::Char('q') => return Some(vec![]),
+            KeyCode::Char('c') => {
+                if app.selected.is_empty() {
+                    *message = "No files or directories selected!".to_string();
+                } else {
+                    return Some(get_final_selected_paths(&app.selected, &app.deselected));
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k')    => app.move_cursor_up(),
+            KeyCode::Down | KeyCode::Char('j')  => app.move_cursor_down(),
+            KeyCode::Char(' ') => {
+                if let Some(entry) = app.entries.get(app.cursor) {
+                    let path = entry.path();
+                    let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                    if app.selected.contains(&path) {
+                        app.selected.remove(&path);
+                        if is_dir {
+                            app.deselected.retain(|p| !p.starts_with(&path));
+                        }
+                    } else if is_under_selected(&app.selected, &app.deselected, &path) {
+                        if app.deselected.contains(&path) {
+                            app.deselected.remove(&path);
+                        } else {
+                            app.deselected.insert(path);
+                        }
+                    } else {
+                        app.selected.insert(path);
+                    }
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                if let Some(entry) = app.entries.get(app.cursor) {
+                    if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+                        app.current_dir = entry.path();
+                        app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
+                        app.reset_cursor();
+                    }
+                }
+            }
+            KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Left => {
+                if let Some(parent) = app.current_dir.parent() {
+                    app.current_dir = parent.to_path_buf();
+                    app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
+                    app.reset_cursor();
+                }
+            }
+            KeyCode::Char('r') => {
+                if !app.no_path {
+                    app.relative = !app.relative;
+                }
+            }
+            KeyCode::Char('n') => {
+                app.no_path = !app.no_path;
+                if app.no_path {
+                    app.relative = false;
+                }
+            }
+            _ => {}
+        }
+        None
     }
 
     loop {
@@ -331,68 +387,9 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
 
         // Input handling
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(KeyEvent { code, .. }) = event::read()? {
-                match code {
-                    KeyCode::Char('q') => return Ok(vec![]),
-                    KeyCode::Char('c') => {
-                        if app.selected.is_empty() {
-                            message = "No files or directories selected!".to_string();
-                        } else {
-                            return Ok(get_final_selected_paths(&app.selected, &app.deselected));
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('k')    => app.move_cursor_up(),
-                    KeyCode::Down | KeyCode::Char('j')  => app.move_cursor_down(),
-                    KeyCode::Char(' ') => {
-                        if let Some(entry) = app.entries.get(app.cursor) {
-                            let path = entry.path();
-                            let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
-                            if app.selected.contains(&path) {
-                                // Deselecting a directory: remove all its children from deselected
-                                app.selected.remove(&path);
-                                if is_dir {
-                                    app.deselected.retain(|p| !p.starts_with(&path));
-                                }
-                            } else if is_under_selected(&app.selected, &app.deselected, &path) {
-                                // If this is a child of a selected dir, toggle in deselected
-                                if app.deselected.contains(&path) {
-                                    app.deselected.remove(&path);
-                                } else {
-                                    app.deselected.insert(path);
-                                }
-                            } else {
-                                app.selected.insert(path);
-                            }
-                        }
-                    }
-                    KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-                        if let Some(entry) = app.entries.get(app.cursor) {
-                            if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
-                                app.current_dir = entry.path();
-                                app.entries = read_dir_sorted(&app.current_dir)?;
-                                app.reset_cursor();
-                            }
-                        }
-                    }
-                    KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Left => {
-                        if let Some(parent) = app.current_dir.parent() {
-                            app.current_dir = parent.to_path_buf();
-                            app.entries = read_dir_sorted(&app.current_dir)?;
-                            app.reset_cursor();
-                        }
-                    }
-                    KeyCode::Char('r') => {
-                        if !app.no_path {
-                            app.relative = !app.relative;
-                        }
-                    }
-                    KeyCode::Char('n') => {
-                        app.no_path = !app.no_path;
-                        if app.no_path {
-                            app.relative = false;
-                        }
-                    }
-                    _ => {}
+            if let Event::Key(key_event) = event::read()? {
+                if let Some(result) = handle_key_event(&mut app, key_event, &mut message) {
+                    return Ok(result);
                 }
             }
         }
