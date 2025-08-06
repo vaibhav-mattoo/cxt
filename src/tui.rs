@@ -13,7 +13,7 @@ use ratatui::{
 };
 use ratatui::text::{Span, Line};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env,
     fs,
     io,
@@ -49,6 +49,7 @@ struct AppState {
     deselected: HashSet<PathBuf>,
     relative: bool,
     no_path: bool,
+    directory_history: HashMap<PathBuf, (usize, usize)>, // (cursor, scroll_offset) for each directory
 }
 
 impl AppState {
@@ -65,6 +66,7 @@ impl AppState {
             deselected: HashSet::new(),
             relative: false,
             no_path: false,
+            directory_history: HashMap::new(),
         })
     }
 
@@ -118,6 +120,22 @@ impl AppState {
     fn reset_cursor(&mut self) {
         self.cursor = 0;
         self.scroll_offset = 0;
+    }
+
+    fn save_directory_state(&mut self) {
+        self.directory_history.insert(
+            self.current_dir.clone(),
+            (self.cursor, self.scroll_offset),
+        );
+    }
+
+    fn restore_directory_state(&mut self) {
+        if let Some(&(cursor, scroll_offset)) = self.directory_history.get(&self.current_dir) {
+            self.cursor = cursor;
+            self.scroll_offset = scroll_offset;
+        } else {
+            self.reset_cursor();
+        }
     }
 }
 
@@ -219,17 +237,25 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 if let Some(entry) = app.entries.get(app.cursor) {
                     if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
-                        app.current_dir = entry.path();
+                        let new_path = entry.path();
+                        // Save current directory state before navigating away
+                        app.save_directory_state();
+                        app.current_dir = new_path;
                         app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
+                        // For entering a new directory, reset to top
                         app.reset_cursor();
                     }
                 }
             }
             KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Left => {
                 if let Some(parent) = app.current_dir.parent() {
-                    app.current_dir = parent.to_path_buf();
+                    let parent_path = parent.to_path_buf();
+                    // Save current directory state before navigating away
+                    app.save_directory_state();
+                    app.current_dir = parent_path;
                     app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
-                    app.reset_cursor();
+                    // For going back to parent, restore previous state if available
+                    app.restore_directory_state();
                 }
             }
             KeyCode::Char('r') => {
