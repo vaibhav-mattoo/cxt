@@ -148,7 +148,15 @@ The Terminal User Interface (TUI) provides an intuitive way to browse and select
 - **Enter** or **l** or **→**: Open directory
 - **Backspace** or **h** or **←**: Go to parent directory
 - **c**: Confirm selection and exit
-- **q**: Quit without selection
+- **q/Ctrl-c**: Quit without selection
+
+### Search Mode
+- **/** (forward slash): Enter search mode to find files across the current directory and subdirectories
+- **Esc**: Exit search mode and return to normal navigation
+- **Enter/Arrow keys**: Switch between search input and result navigation
+- **Real-time filtering**: Results update as you type, showing partial matches
+- **Smart sorting**: Directories first, then by shortest match length
+- **Preserved state**: Search query and results persist when navigating between directories
 
 ### TUI Features
 - **Visual selection**: Selected items are highlighted
