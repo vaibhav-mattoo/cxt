@@ -1,6 +1,6 @@
 [package]
 name = "cxt"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["Vaibhav Mattoo <vaibhavmattoo1@gmail.com>"]
 description = "Aggregates file/directory contents and sends them to the clipboard, a file, or stdout"

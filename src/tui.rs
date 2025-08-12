@@ -175,17 +175,7 @@ impl AppState {
         }
     }
 
-    fn restore_search_state(&mut self) {
-        if let Some((query, results)) = self.search_history.get(&self.current_dir) {
-            self.search_mode = true;
-            self.search_query = query.clone();
-            self.search_results = results.clone();
-        } else {
-            self.search_mode = false;
-            self.search_query.clear();
-            self.search_results.clear();
-        }
-    }
+
 
     fn enter_search_mode(&mut self) {
         self.search_mode = true;
@@ -193,24 +183,18 @@ impl AppState {
         self.original_cursor = self.cursor;
         self.original_scroll_offset = self.scroll_offset;
         
-        // Check if we have saved search state for this directory
-        if let Some((query, results)) = self.search_history.get(&self.current_dir) {
-            self.search_query = query.clone();
-            self.search_results = results.clone();
-        } else {
-            self.search_query.clear();
-            self.search_results.clear();
-            // Initialize search results with current directory entries
-            self.update_search();
-        }
+        // Always start with a fresh search - clear any previous search state
+        self.search_query.clear();
+        self.search_results.clear();
+        // Initialize search results with current directory entries
+        self.update_search();
         
         self.cursor = 0;
         self.scroll_offset = 0;
     }
 
     fn exit_search_mode(&mut self) {
-        // Save current search state before exiting
-        self.save_search_state();
+        // Clear search state when exiting with ESC to allow fresh search
         self.search_mode = false;
         self.search_focused = false;
         self.search_query.clear();
@@ -221,6 +205,9 @@ impl AppState {
         self.cursor = self.original_cursor;
         self.scroll_offset = self.original_scroll_offset;
         self.search_results.clear();
+        
+        // Remove the saved search state for this directory to ensure fresh search
+        self.search_history.remove(&self.current_dir);
     }
 
     fn update_search(&mut self) {
@@ -422,8 +409,11 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                                 app.save_directory_state();
                                 app.current_dir = new_path;
                                 app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
-                                // Restore search state for the new directory
-                                app.restore_search_state();
+                                // Don't restore search state - start fresh in new directory
+                                app.search_mode = false;
+                                app.search_focused = false;
+                                app.search_query.clear();
+                                app.search_results.clear();
                                 app.reset_cursor();
                             } else {
                                 // Select the file
@@ -493,8 +483,11 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                                 app.save_directory_state();
                                 app.current_dir = new_path;
                                 app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
-                                // Restore search state for the new directory
-                                app.restore_search_state();
+                                // Don't restore search state - start fresh in new directory
+                                app.search_mode = false;
+                                app.search_focused = false;
+                                app.search_query.clear();
+                                app.search_results.clear();
                                 app.reset_cursor();
                             }
                         }
@@ -509,8 +502,11 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                             app.save_directory_state();
                             app.current_dir = parent_path;
                             app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
-                            // Restore search state for the parent directory
-                            app.restore_search_state();
+                            // Don't restore search state - start fresh in parent directory
+                            app.search_mode = false;
+                            app.search_focused = false;
+                            app.search_query.clear();
+                            app.search_results.clear();
                             app.restore_directory_state();
                         }
                         return None;
@@ -566,8 +562,11 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                         app.save_search_state();
                         app.current_dir = new_path;
                         app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
-                        // Restore search state for the new directory
-                        app.restore_search_state();
+                        // Don't restore search state - start fresh in new directory
+                        app.search_mode = false;
+                        app.search_focused = false;
+                        app.search_query.clear();
+                        app.search_results.clear();
                         // For entering a new directory, reset to top
                         app.reset_cursor();
                     }
@@ -583,7 +582,11 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                     app.entries = read_dir_sorted(&app.current_dir).unwrap_or_default();
                     // For going back to parent, restore previous state if available
                     app.restore_directory_state();
-                    app.restore_search_state();
+                    // Don't restore search state - start fresh in parent directory
+                    app.search_mode = false;
+                    app.search_focused = false;
+                    app.search_query.clear();
+                    app.search_results.clear();
                 }
             }
             KeyCode::Char('r') => {
