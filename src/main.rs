@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use glob::glob;
 
 mod cli;
 mod content_aggregator;
@@ -12,43 +11,8 @@ use cli::Args;
 use content_aggregator::ContentAggregator;
 use output_handler::OutputHandler;
 
-/// Expand wildcard patterns in paths
-fn expand_wildcards(paths: &[String]) -> Result<Vec<String>> {
-    let mut expanded_paths = Vec::new();
-    
-    for path_str in paths {
-        // Check if the path contains wildcards
-        if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
-            // Use glob to expand the pattern
-            match glob(path_str) {
-                Ok(entries) => {
-                    for entry in entries {
-                        match entry {
-                            Ok(path) => {
-                                let path_str = path.to_string_lossy().to_string();
-                                expanded_paths.push(path_str);
-                            }
-                            Err(e) => {
-                                eprintln!("Warning: Failed to expand glob pattern '{}': {}", path_str, e);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Invalid glob pattern '{}': {}", path_str, e));
-                }
-            }
-        } else {
-            // No wildcards, add the path as-is
-            expanded_paths.push(path_str.clone());
-        }
-    }
-    
-    Ok(expanded_paths)
-}
-
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse_from(wild::args());
     
     // Validate arguments
     if let Err(e) = args.validate() {
@@ -68,14 +32,6 @@ fn main() -> Result<()> {
         args.paths.clone()
     };
 
-    // Expand wildcard patterns in paths
-    let expanded_paths = expand_wildcards(&paths)?;
-    
-    if expanded_paths.is_empty() {
-        println!("No files found matching the specified patterns. Exiting.");
-        return Ok(());
-    }
-
     // Initialize content aggregator
     let mut aggregator = ContentAggregator::new(
         args.relative,
@@ -85,7 +41,7 @@ fn main() -> Result<()> {
     );
 
     // Aggregate content from all specified paths
-    let content = aggregator.aggregate_paths(&expanded_paths)?;
+    let content = aggregator.aggregate_paths(&paths)?;
 
     // Handle output based on flags
     let mut output_handler = OutputHandler::new();

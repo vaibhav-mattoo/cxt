@@ -302,12 +302,12 @@ dependencies = [
  "clap",
  "crossterm",
  "dialoguer",
- "glob",
  "pathdiff",
  "predicates",
  "ratatui",
  "tempfile",
  "walkdir",
+ "wild",
 ]
 
 [[package]]
@@ -1156,6 +1156,15 @@ name = "weezl"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
+
+[[package]]
+name = "wild"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3131afc8c575281e1e80f36ed6a092aa502c08b18ed7524e86fbbb12bb410e1"
+dependencies = [
+ "glob",
+]
 
 [[package]]
 name = "winapi"
