@@ -1,8 +1,11 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph,
+        Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    },
     Frame,
 };
 use std::{
@@ -14,19 +17,6 @@ use tui_tree_widget::{Tree, TreeItem};
 
 use crate::tui::app::{AppMode, AppState};
 use super::theme;
-
-const HELP_ITEMS: &[(&str, &str)] = &[
-    ("↑/k", "Move up"),
-    ("↓/j", "Move down"),
-    ("←/h", "Collapse dir"),
-    ("→/l", "Expand dir"),
-    ("Enter", "Toggle expand"),
-    ("Backspace", "Parent dir"),
-    ("Space", "Select/Unselect"),
-    ("/", "Search files"),
-    ("c", "Confirm"),
-    ("q/Ctrl-c", "Quit"),
-];
 
 fn panel(title: &str, focused: bool) -> Block<'static> {
     Block::default()
@@ -48,17 +38,13 @@ fn panel(title: &str, focused: bool) -> Block<'static> {
 
 /// Render the full TUI frame and return the inner file-list height in rows.
 pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize) -> u16 {
-    let help_lines = build_help_lines(f.area().width, app);
-    let status_line_height: u16 = if file_count > 0 { 1 } else { 0 };
-    let help_height = help_lines.len().max(1) as u16 + 2 + status_line_height;
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(1),
-            Constraint::Length(help_height),
+            Constraint::Length(1),
         ])
         .split(f.area());
 
@@ -66,7 +52,11 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize)
 
     render_path_bar(f, app, chunks[0]);
     render_file_list(f, app, chunks[1], inner_list_height as usize);
-    render_help_footer(f, message, &help_lines, chunks[2], file_count);
+    render_status_bar(f, chunks[2], message, file_count);
+
+    if app.show_help {
+        render_help_overlay(f, f.area());
+    }
 
     inner_list_height
 }
@@ -135,9 +125,7 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
                     display_text.push('/');
                 }
                 let is_cursor = i == app.search_cursor;
-                let is_selected = (app.selected.contains(&result.path)
-                    && !app.deselected.contains(&result.path))
-                    || app.is_implicitly_selected(&result.path);
+                let is_selected = app.is_selected(&result.path, result.is_dir);
 
                 let marker = if is_selected { "✓ " } else { "  " };
                 let base_style = if result.is_dir {
@@ -176,17 +164,39 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
 
         let list = List::new(items).block(panel("Files", app.mode != AppMode::Normal));
         f.render_widget(list, area);
+
+        let mut sb_state = ScrollbarState::new(app.search_results.len())
+            .position(app.search_cursor);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None),
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut sb_state,
+        );
         return;
     }
 
-    // Normal mode: collapsible tree view
+    // Normal mode: collapsible tree view.
+    // Pre-pass: compute which visible directories are fully selected so we can
+    // pass an immutable HashSet into the recursive tree builder (avoids borrow
+    // conflicts with the mutable tree_state render below).
     let open = app.tree_state.opened().clone();
+    let visible_dirs = collect_visible_dirs(&app.root_dir, &app.dir_cache, &open);
+    let fully_selected_dirs: HashSet<PathBuf> = visible_dirs
+        .into_iter()
+        .filter(|d| app.dir_fully_selected(d))
+        .collect();
+
     let items = build_styled_tree_items(
         &app.root_dir,
         &app.dir_cache,
         &open,
         &app.selected,
-        &app.deselected,
+        &fully_selected_dirs,
     );
 
     let Ok(tree_widget) = Tree::new(&items) else {
@@ -204,131 +214,147 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
-fn render_help_footer(
-    f: &mut Frame,
-    message: &str,
-    help_lines: &[Line<'static>],
-    area: Rect,
-    selected_count: usize,
-) {
-    let help_title = Span::styled(
-        "Help",
-        Style::default()
-            .fg(theme::MUTED)
-            .add_modifier(Modifier::BOLD),
-    );
-    let status_line: Option<Line<'static>> = if selected_count > 0 {
-        Some(Line::from(vec![Span::styled(
+fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize) {
+    let hint_str = "space select   c copy   ? help   q quit ";
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(hint_str.len() as u16),
+        ])
+        .split(area);
+
+    if message.is_empty() {
+        let left = Line::from(vec![Span::styled(
             format!(
-                " {} file{} selected",
-                selected_count,
-                if selected_count == 1 { "" } else { "s" },
+                " {file_count} file{} selected",
+                if file_count == 1 { "" } else { "s" }
             ),
-            Style::default()
-                .fg(theme::SELECTED)
-                .add_modifier(Modifier::BOLD),
-        )]))
+            Style::default().fg(theme::SELECTED),
+        )]);
+        f.render_widget(Paragraph::new(left), chunks[0]);
     } else {
-        None
-    };
-    let footer_widget = if message.is_empty() {
-        let mut content: Vec<Line<'static>> = Vec::new();
-        if let Some(status) = status_line {
-            content.push(status);
-        }
-        content.extend_from_slice(help_lines);
-        Paragraph::new(content)
-            .block(Block::default().borders(Borders::ALL).title(help_title))
-            .wrap(Wrap { trim: true })
-    } else {
-        let mut content: Vec<Line<'static>> = Vec::new();
-        if let Some(status) = status_line {
-            content.push(status);
-        }
-        content.push(Line::from(vec![Span::styled(
-            message.to_string(),
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        Paragraph::new(content)
-            .block(Block::default().borders(Borders::ALL).title("Help"))
-            .wrap(Wrap { trim: true })
-    };
-    f.render_widget(footer_widget, area);
+        let error = Line::from(vec![Span::styled(
+            format!(" {message}"),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )]);
+        f.render_widget(Paragraph::new(error), chunks[0]);
+    }
+
+    let hint = Line::from(vec![Span::styled(
+        hint_str,
+        Style::default().fg(theme::MUTED),
+    )]);
+    f.render_widget(Paragraph::new(hint), chunks[1]);
 }
 
-fn build_help_lines(width: u16, app: &AppState) -> Vec<Line<'static>> {
-    let max_width = width.saturating_sub(6) as usize;
+fn render_help_overlay(f: &mut Frame, area: Rect) {
+    let modal = centered_rect(60, 85, area);
+    f.render_widget(Clear, modal);
 
-    let extra_help: &[(&str, &str)] = if app.mode != AppMode::Normal {
-        if app.mode == AppMode::SearchFocused {
-            &[("Esc", "Leave search"), ("Enter/↑/↓", "Search")]
-        } else {
-            &[
-                ("/", "Continue searching"),
-                ("Esc", "Leave search"),
-                ("↑/k", "Move up"),
-                ("↓/j", "Move down"),
-                ("←/h/Backspace", "Parent dir"),
-                ("→/l/Enter", "Open dir"),
-                ("Space", "Select/Unselect"),
-                ("c", "Confirm"),
-                ("q/Ctrl-c", "Quit"),
-            ]
-        }
-    } else {
-        &[
-            ("r", "Toggle relative path"),
-            ("n", "Toggle no path headers"),
-        ]
+    let block = panel("Keybindings", true);
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+
+    // Reserve the last inner row for the close hint.
+    let content_area = Rect {
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    let hint_area = Rect {
+        y: inner.y + inner.height.saturating_sub(1),
+        height: inner.height.min(1),
+        ..inner
     };
 
-    let combined: Vec<(&str, &str)> = if app.mode != AppMode::Normal {
-        extra_help.to_vec()
-    } else {
-        HELP_ITEMS
-            .iter()
-            .copied()
-            .chain(extra_help.iter().copied())
-            .collect()
+    let help_lines = build_help_lines();
+    f.render_widget(Paragraph::new(help_lines), content_area);
+
+    let close_hint = Line::from(vec![Span::styled(
+        "? / Esc  close ",
+        Style::default().fg(theme::MUTED),
+    )])
+    .right_aligned();
+    f.render_widget(Paragraph::new(close_hint), hint_area);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
+}
+
+/// One keybinding per line, key padded to the width of the longest key.
+fn build_help_lines() -> Vec<Line<'static>> {
+    const ALL: &[(&str, &str)] = &[
+        ("↑/k", "Move up"),
+        ("↓/j", "Move down"),
+        ("←/h", "Collapse dir"),
+        ("→/l", "Expand dir"),
+        ("Enter", "Toggle expand"),
+        ("Backspace", "Parent dir"),
+        ("Space", "Select/Unselect"),
+        ("/", "Search files"),
+        ("?", "Toggle help"),
+        ("c", "Confirm"),
+        ("q/Ctrl-c", "Quit"),
+        ("r", "Toggle relative path"),
+        ("n", "Toggle no path headers"),
+    ];
+
+    let key_width = ALL.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+
+    ALL.iter()
+        .map(|(key, desc)| {
+            Line::from(vec![
+                Span::styled(
+                    format!("{:<key_width$}", key),
+                    Style::default()
+                        .fg(theme::BORDER_FOCUS)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  —  ", Style::default().fg(theme::MUTED)),
+                Span::styled(desc.to_string(), Style::default().fg(theme::FG)),
+            ])
+        })
+        .collect()
+}
+
+/// Collect all directory paths visible in the current tree view
+/// (top-level entries plus all recursively opened subdirectories).
+fn collect_visible_dirs(
+    dir: &PathBuf,
+    dir_cache: &HashMap<PathBuf, Vec<fs::DirEntry>>,
+    open: &HashSet<Vec<PathBuf>>,
+) -> Vec<PathBuf> {
+    let Some(entries) = dir_cache.get(dir) else {
+        return vec![];
     };
-
-    let mut help_lines: Vec<Line<'static>> = vec![];
-    let mut spans: Vec<Span<'static>> = vec![];
-    let mut current_width = 0usize;
-
-    for (i, (key, desc)) in combined.iter().enumerate() {
-        let key_str = key.to_string();
-        let desc_str = format!(": {desc}");
-        let item_width = key_str.len() + desc_str.len() + if i > 0 { 2 } else { 0 };
-        if i > 0 {
-            if current_width + item_width > max_width {
-                help_lines.push(Line::from(std::mem::take(&mut spans)));
-                current_width = 0;
-            } else {
-                spans.push(Span::raw("  "));
-                current_width += 2;
+    let mut result = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+            result.push(path.clone());
+            let is_open = open.iter().any(|kp| kp.last() == Some(&path));
+            if is_open {
+                result.extend(collect_visible_dirs(&path, dir_cache, open));
             }
         }
-        spans.push(Span::styled(
-            key_str.clone(),
-            Style::default()
-                .fg(theme::BORDER_FOCUS)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(": ", Style::default().fg(theme::MUTED)));
-        spans.push(Span::styled(
-            desc.to_string(),
-            Style::default().fg(theme::FG),
-        ));
-        current_width += key_str.len() + 2 + desc_str.len();
     }
-    if !spans.is_empty() {
-        help_lines.push(Line::from(spans));
-    }
-
-    help_lines
+    result
 }
 
 /// Build a `Line` from `text` where characters at `indices` use `match_style`
@@ -374,7 +400,7 @@ fn build_styled_tree_items(
     dir_cache: &HashMap<PathBuf, Vec<fs::DirEntry>>,
     open: &HashSet<Vec<PathBuf>>,
     selected: &HashSet<PathBuf>,
-    deselected: &HashSet<PathBuf>,
+    fully_selected_dirs: &HashSet<PathBuf>,
 ) -> Vec<TreeItem<'static, PathBuf>> {
     let entries = match dir_cache.get(dir) {
         Some(e) => e,
@@ -393,15 +419,11 @@ fn build_styled_tree_items(
                 raw_name
             };
 
-            let is_directly_selected =
-                selected.contains(&path) && !deselected.contains(&path);
-            let is_implicit = selected.iter().any(|sel| {
-                sel.is_dir()
-                    && path.starts_with(sel)
-                    && path != *sel
-                    && !deselected.contains(&path)
-            });
-            let is_selected = is_directly_selected || is_implicit;
+            let is_selected = if is_dir {
+                fully_selected_dirs.contains(&path)
+            } else {
+                selected.contains(&path)
+            };
 
             let marker = if is_selected { "✓ " } else { "  " };
             let name_style = if is_dir {
@@ -422,16 +444,22 @@ fn build_styled_tree_items(
             if is_dir {
                 let is_open = open.iter().any(|kp| kp.last() == Some(&path));
                 let children = if is_open {
-                    build_styled_tree_items(&path, dir_cache, open, selected, deselected)
+                    build_styled_tree_items(
+                        &path,
+                        dir_cache,
+                        open,
+                        selected,
+                        fully_selected_dirs,
+                    )
                 } else {
                     match dir_cache.get(&path) {
                         Some(sub_entries) if !sub_entries.is_empty() => sub_entries
                             .iter()
-                            .filter_map(|e| {
-                                Some(TreeItem::new_leaf(
+                            .map(|e| {
+                                TreeItem::new_leaf(
                                     e.path(),
                                     e.file_name().to_string_lossy().to_string(),
-                                ))
+                                )
                             })
                             .collect(),
                         // Not yet cached — dummy child so the ▶ indicator always shows.

@@ -1,8 +1,9 @@
 use fuzzy_matcher::FuzzyMatcher;
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     env, fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -27,9 +28,9 @@ pub struct AppState {
     pub dir_cache: HashMap<PathBuf, Vec<fs::DirEntry>>,
     pub root_history: Vec<PathBuf>,
     pub selected: HashSet<PathBuf>,
-    pub deselected: HashSet<PathBuf>,
     pub relative: bool,
     pub no_path: bool,
+    pub show_help: bool,
     pub search_history: HashMap<PathBuf, (String, Vec<SearchResult>)>,
     pub mode: AppMode,
     pub search_query: String,
@@ -40,6 +41,7 @@ pub struct AppState {
     pub original_cursor: usize,
     pub original_scroll_offset: usize,
     selected_file_count_cache: Option<usize>,
+    dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -68,9 +70,9 @@ impl AppState {
             dir_cache,
             root_history: Vec::new(),
             selected: HashSet::new(),
-            deselected: HashSet::new(),
             relative: false,
             no_path: false,
+            show_help: false,
             search_history: HashMap::new(),
             mode: AppMode::Normal,
             search_query: String::new(),
@@ -81,6 +83,7 @@ impl AppState {
             original_cursor: 0,
             original_scroll_offset: 0,
             selected_file_count_cache: None,
+            dir_select_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -108,65 +111,66 @@ impl AppState {
 
 // SelectionExt
 impl AppState {
-    pub fn is_implicitly_selected(&self, path: &std::path::Path) -> bool {
-        self.selected.iter().any(|sel| {
-            sel.is_dir() && path.starts_with(sel) && path != sel && !self.deselected.contains(path)
-        })
+    fn invalidate_caches(&mut self) {
+        self.selected_file_count_cache = None;
+        self.dir_select_cache.get_mut().clear();
     }
 
     pub fn toggle_selection(&mut self, path: PathBuf, is_dir: bool) {
-        self.selected_file_count_cache = None;
-        if self.selected.contains(&path) {
-            self.selected.remove(&path);
-            if is_dir {
-                self.deselected.retain(|p| !p.starts_with(&path));
-            }
-        } else if self.is_implicitly_selected(&path) {
-            if self.deselected.contains(&path) {
-                self.deselected.remove(&path);
+        self.invalidate_caches();
+        if is_dir {
+            let files = files_under(&path);
+            let all = !files.is_empty() && files.iter().all(|f| self.selected.contains(f));
+            if all {
+                for f in files {
+                    self.selected.remove(&f);
+                }
             } else {
-                self.deselected.insert(path);
+                for f in files {
+                    self.selected.insert(f);
+                }
             }
-        } else {
+        } else if !self.selected.remove(&path) {
             self.selected.insert(path);
         }
     }
 
-    pub fn collect_selected_paths(&self) -> Vec<String> {
-        let mut final_paths = Vec::new();
-        for path in &self.selected {
-            if !self.deselected.iter().any(|d| path.starts_with(d)) {
-                if let Ok(metadata) = std::fs::metadata(path) {
-                    if metadata.is_dir() {
-                        let entries: Vec<String> = ignore::WalkBuilder::new(path)
-                            .hidden(false)
-                            .git_ignore(false)
-                            .follow_links(true)
-                            .build()
-                            .filter_map(|e| e.ok())
-                            .filter(|e| e.path() != path)
-                            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-                            .filter(|e| !self.deselected.iter().any(|d| e.path().starts_with(d)))
-                            .map(|e| e.path().to_string_lossy().to_string())
-                            .collect();
-                        final_paths.extend(entries);
-                    } else {
-                        final_paths.push(path.to_string_lossy().to_string());
-                    }
-                }
-            }
+    /// True iff dir has at least one descendant file and ALL are selected.
+    /// Result is cached until the next selection change.
+    pub fn dir_fully_selected(&self, dir: &Path) -> bool {
+        let cached = self.dir_select_cache.borrow().get(dir).copied();
+        if let Some(v) = cached {
+            return v;
         }
-        final_paths
+        let files = files_under(dir);
+        let result = !files.is_empty() && files.iter().all(|f| self.selected.contains(f));
+        self.dir_select_cache
+            .borrow_mut()
+            .insert(dir.to_path_buf(), result);
+        result
     }
 
-    /// Returns the number of concrete files the current selection resolves to.
-    /// Walks selected directories and respects deselected sub-paths.
-    /// Result is cached until the selection changes.
+    /// Render-facing selection test that handles files and directories uniformly.
+    pub fn is_selected(&self, path: &Path, is_dir: bool) -> bool {
+        if is_dir {
+            self.dir_fully_selected(path)
+        } else {
+            self.selected.contains(path)
+        }
+    }
+
+    pub fn collect_selected_paths(&self) -> Vec<String> {
+        self.selected
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect()
+    }
+
     pub fn selected_file_count(&mut self) -> usize {
         if let Some(cached) = self.selected_file_count_cache {
             return cached;
         }
-        let count = self.collect_selected_paths().len();
+        let count = self.selected.len();
         self.selected_file_count_cache = Some(count);
         count
     }
@@ -195,9 +199,9 @@ impl AppState {
             .collect();
         self.dir_cache.insert(dir.clone(), entries);
         for subdir in subdirs {
-            if !self.dir_cache.contains_key(&subdir) {
-                if let Ok(sub_entries) = read_dir_sorted(&subdir) {
-                    self.dir_cache.insert(subdir, sub_entries);
+            if let std::collections::hash_map::Entry::Vacant(e) = self.dir_cache.entry(subdir) {
+                if let Ok(sub_entries) = read_dir_sorted(e.key()) {
+                    e.insert(sub_entries);
                 }
             }
         }
@@ -376,6 +380,19 @@ impl AppState {
     }
 }
 
+/// Returns all files under `dir` using the same walker settings as path collection.
+pub fn files_under(dir: &Path) -> Vec<PathBuf> {
+    ignore::WalkBuilder::new(dir)
+        .hidden(false)
+        .git_ignore(false)
+        .follow_links(true)
+        .build()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .map(|e| e.path().to_path_buf())
+        .collect()
+}
+
 pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<fs::DirEntry>> {
     let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| {
@@ -384,4 +401,3 @@ pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<fs::DirEntry>> {
     });
     Ok(entries)
 }
-

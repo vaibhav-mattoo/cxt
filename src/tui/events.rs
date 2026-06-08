@@ -107,6 +107,15 @@ fn handle_normal(
     key_event: KeyEvent,
     message: &mut String,
 ) -> Option<Vec<String>> {
+    if app.show_help {
+        match key_event.code {
+            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.show_help = false;
+            }
+            _ => {}
+        }
+        return None;
+    }
     match key_event.code {
         KeyCode::Char('q') => return Some(vec![]),
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -155,6 +164,9 @@ fn handle_normal(
                 let is_dir = path.is_dir();
                 app.toggle_selection(path, is_dir);
             }
+        }
+        KeyCode::Char('?') => {
+            app.show_help = true;
         }
         KeyCode::Char('r') if !app.no_path => {
             app.relative = !app.relative;
