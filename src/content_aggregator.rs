@@ -4,10 +4,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-use crate::path_formatter::PathFormatter;
-
 pub struct ContentAggregator {
-    path_formatter: PathFormatter,
+    formatter: Box<dyn crate::formatter::Formatter>,
     include_hidden_in_dirs: bool,
     file_count: usize,
     ignore: Vec<PathBuf>,
@@ -16,14 +14,13 @@ pub struct ContentAggregator {
 
 impl ContentAggregator {
     pub fn new(
-        use_relative: bool,
-        no_path: bool,
+        formatter: Box<dyn crate::formatter::Formatter>,
         include_hidden_in_dirs: bool,
         ignore: Vec<String>,
         sort: bool,
     ) -> Self {
         Self {
-            path_formatter: PathFormatter::new(use_relative, no_path),
+            formatter,
             include_hidden_in_dirs,
             file_count: 0,
             ignore: ignore.into_iter().map(PathBuf::from).collect(),
@@ -38,6 +35,7 @@ impl ContentAggregator {
     }
 
     pub fn aggregate_paths<W: Write>(&mut self, paths: &[String], writer: &mut W) -> Result<()> {
+        writer.write_all(self.formatter.document_start().as_bytes())?;
         for path_str in paths {
             let path = Path::new(path_str);
             if !path.exists() {
@@ -58,6 +56,7 @@ impl ContentAggregator {
                 self.aggregate_directory(path, writer)?;
             }
         }
+        writer.write_all(self.formatter.document_end().as_bytes())?;
         Ok(())
     }
 
@@ -65,9 +64,10 @@ impl ContentAggregator {
         input_paths.iter().any(|p| Path::new(p) == path)
     }
 
-    /// Aggregate a single file; calls `write_header` which canonicalises the path.
+    /// Aggregate a single file; canonicalises path before passing to formatter.
     fn aggregate_file<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
-        self.path_formatter.write_header(path, writer)?;
+        let display_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.formatter.write_file_header(&display_path, writer)?;
         let mut file = match fs::File::open(path) {
             Ok(f) => f,
             Err(e) => {
@@ -78,15 +78,15 @@ impl ContentAggregator {
         if let Err(e) = std::io::copy(&mut file, writer) {
             eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
         }
-        writeln!(writer)?;
+        writer.write_all(self.formatter.file_footer().as_bytes())?;
         self.file_count += 1;
         Ok(())
     }
 
-    /// Like `aggregate_file` but uses `write_header_precanon` — skips `canonicalize()`.
+    /// Like `aggregate_file` but skips `canonicalize()` — path is already canonical.
     /// Called from `aggregate_directory` which pre-canonicalises the base directory once.
     fn aggregate_file_precanon<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
-        self.path_formatter.write_header_precanon(path, writer)?;
+        self.formatter.write_file_header(path, writer)?;
         let mut file = match fs::File::open(path) {
             Ok(f) => f,
             Err(e) => {
@@ -97,7 +97,7 @@ impl ContentAggregator {
         if let Err(e) = std::io::copy(&mut file, writer) {
             eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
         }
-        writeln!(writer)?;
+        writer.write_all(self.formatter.file_footer().as_bytes())?;
         self.file_count += 1;
         Ok(())
     }
@@ -170,8 +170,18 @@ impl ContentAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formatter::{build_formatter, FormatChoice};
     use std::fs;
     use tempfile::tempdir;
+
+    fn xml_aggregator(no_path: bool) -> ContentAggregator {
+        ContentAggregator::new(
+            build_formatter(FormatChoice::Xml, no_path, false),
+            false,
+            vec![],
+            true,
+        )
+    }
 
     #[test]
     fn test_aggregate_single_file() {
@@ -179,7 +189,7 @@ mod tests {
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "Hello, World!").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false, vec![], true);
+        let mut aggregator = xml_aggregator(false);
         let mut buffer = Vec::new();
         aggregator
             .aggregate_paths(&[file_path.to_str().unwrap().to_string()], &mut buffer)
@@ -187,7 +197,7 @@ mod tests {
         let content = String::from_utf8(buffer).unwrap();
 
         assert!(content.contains("Hello, World!"));
-        assert!(content.contains("--- File:"));
+        assert!(content.contains("<file path="));
         assert_eq!(aggregator.file_count(), 1);
     }
 
@@ -197,7 +207,7 @@ mod tests {
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "Hello, World!").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, true, false, vec![], true);
+        let mut aggregator = xml_aggregator(true);
         let mut buffer = Vec::new();
         aggregator
             .aggregate_paths(&[file_path.to_str().unwrap().to_string()], &mut buffer)
@@ -205,7 +215,8 @@ mod tests {
         let content = String::from_utf8(buffer).unwrap();
 
         assert!(content.contains("Hello, World!"));
-        assert!(!content.contains("--- File:"));
+        assert!(content.contains("<file>"));
+        assert!(!content.contains("path="));
         assert_eq!(aggregator.file_count(), 1);
     }
 
@@ -221,7 +232,7 @@ mod tests {
         fs::write(&file1, "File 1 content").unwrap();
         fs::write(&file2, "File 2 content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false, vec![], true);
+        let mut aggregator = xml_aggregator(false);
         let mut buffer = Vec::new();
         aggregator
             .aggregate_paths(&[dir.path().to_str().unwrap().to_string()], &mut buffer)
@@ -235,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_nonexistent_path() {
-        let mut aggregator = ContentAggregator::new(false, false, false, vec![], true);
+        let mut aggregator = xml_aggregator(false);
         let mut buffer = Vec::new();
         let result =
             aggregator.aggregate_paths(&["nonexistent_file.txt".to_string()], &mut buffer);
@@ -256,7 +267,7 @@ mod tests {
         fs::write(&visible_file, "Visible content").unwrap();
         fs::write(&hidden_file, "Hidden content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false, vec![], true);
+        let mut aggregator = xml_aggregator(false);
         let mut buffer = Vec::new();
         aggregator
             .aggregate_paths(&[dir.path().to_str().unwrap().to_string()], &mut buffer)
@@ -277,7 +288,12 @@ mod tests {
         fs::write(&visible_file, "Visible content").unwrap();
         fs::write(&hidden_file, "Hidden content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, true, vec![], true);
+        let mut aggregator = ContentAggregator::new(
+            build_formatter(FormatChoice::Xml, false, false),
+            true,
+            vec![],
+            true,
+        );
         let mut buffer = Vec::new();
         aggregator
             .aggregate_paths(&[dir.path().to_str().unwrap().to_string()], &mut buffer)
@@ -295,7 +311,7 @@ mod tests {
         let hidden_file = dir.path().join(".hidden.txt");
         fs::write(&hidden_file, "Hidden content").unwrap();
 
-        let mut aggregator = ContentAggregator::new(false, false, false, vec![], true);
+        let mut aggregator = xml_aggregator(false);
         let mut buffer = Vec::new();
         aggregator
             .aggregate_paths(&[hidden_file.to_str().unwrap().to_string()], &mut buffer)

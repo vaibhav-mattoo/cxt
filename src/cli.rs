@@ -41,6 +41,15 @@ pub struct Args {
         help = "Output files in arbitrary order (faster for large directories; implies non-deterministic output)"
     )]
     pub no_sort: bool,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value = "xml",
+        help = "Output format: xml (default) wraps files in <file path=\"...\"> tags \
+                inside a <context> block; markdown uses ## headings and fenced code blocks"
+    )]
+    pub format: crate::formatter::FormatChoice,
 }
 
 impl Args {

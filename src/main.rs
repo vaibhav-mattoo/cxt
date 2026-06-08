@@ -5,9 +5,9 @@ use std::io::{self, Write};
 mod cli;
 mod clipboard;
 mod content_aggregator;
+mod formatter;
 mod image_handler;
 mod output_handler;
-mod path_formatter;
 mod tui;
 
 use cli::Args;
@@ -77,9 +77,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let fmt = formatter::build_formatter(args.format, args.no_path, args.relative);
     let mut aggregator = ContentAggregator::new(
-        args.relative,
-        args.no_path,
+        fmt,
         args.hidden,
         args.ignore.clone().into_iter().collect::<Vec<_>>(),
         !args.no_sort,
