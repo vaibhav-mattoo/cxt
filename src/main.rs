@@ -11,7 +11,14 @@ use cli::Args;
 use content_aggregator::ContentAggregator;
 use output_handler::OutputHandler;
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn main() -> Result<()> {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let args = Args::parse_from(wild::args());
     
     // Validate arguments

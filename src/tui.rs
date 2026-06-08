@@ -608,7 +608,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
     loop {
         terminal.draw(|f| {
             // Build help lines
-            let max_width = f.size().width.saturating_sub(6) as usize;
+            let max_width = f.area().width.saturating_sub(6) as usize;
             let mut help_lines = vec![];
             let mut spans = vec![];
             let mut current_width = 0;
@@ -674,7 +674,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
                     Constraint::Min(1),
                     Constraint::Length(help_height),
                 ])
-                .split(f.size());
+                .split(f.area());
 
             // Determine inner list height (subtract top+bottom border)
             let inner_list_height = chunks[1].height.saturating_sub(2) as usize;

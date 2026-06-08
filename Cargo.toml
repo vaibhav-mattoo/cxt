@@ -14,20 +14,24 @@ exclude = ["/target", "/*.rs.bk", "run-tests.sh"]
 
 
 [dependencies]
-clap = { version = "4.4", features = ["derive"] }
-arboard = "3.2"
+clap = { version = "4.6", features = ["derive"] }
+arboard = "3.6"
 anyhow = "1.0"
-walkdir = "2.4"
-dialoguer = "0.11"
+walkdir = "2.5"
+dialoguer = "0.12"
 pathdiff = "0.2.3"
-ratatui = "0.26"
-crossterm = "0.27"
+ratatui = "0.30"
+crossterm = "0.29"
 wild = "2"
+dhat = { version = "0.3", optional = true }
+
+[features]
+dhat-heap = ["dhat"]
 
 [dev-dependencies]
-assert_cmd = "2.0"
-predicates = "3.0"
-tempfile = "3.10" 
+assert_cmd = "2.2"
+predicates = "3.1"
+tempfile = "3.27"
 
 [package.metadata.deb]
 maintainer = "Vaibhav Mattoo <vaibhavmattoo1@gmail.com>"
@@ -39,8 +43,20 @@ cxt is a command-line tool that aggregates the contents of files and directories
 section = "utils"
 priority = "optional"
 assets = [
-    ["target/release/cxt", "usr/bin/", "755"],
-    ["README.md", "usr/share/doc/cxt/", "644"],
-    ["LICENSE", "usr/share/licenses/cxt/", "644"],
+  [
+    "target/release/cxt",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "README.md",
+    "usr/share/doc/cxt/",
+    "644",
+  ],
+  [
+    "LICENSE",
+    "usr/share/licenses/cxt/",
+    "644",
+  ],
 ]
 depends = "$auto"

@@ -6,7 +6,6 @@ use walkdir::WalkDir;
 use crate::path_formatter::PathFormatter;
 
 pub struct ContentAggregator {
-
     /// the formatted strings containing the file paths
     path_formatter: PathFormatter,
 
@@ -24,17 +23,19 @@ pub struct ContentAggregator {
 }
 
 impl ContentAggregator {
-
     /// constructor for ContentAggregator
     /// inputs :
     ///     use_relative : decides how paths are formatted
     ///     no_path : true if no paths to be included
     ///     include_hidden_in_dirs : true if hidden paths needed
     ///     ignore : vector of string paths to ignore
-
-    pub fn new(use_relative: bool, no_path: bool, include_hidden_in_dirs: bool, ignore: Vec<String>) -> Self {
+    pub fn new(
+        use_relative: bool,
+        no_path: bool,
+        include_hidden_in_dirs: bool,
+        ignore: Vec<String>,
+    ) -> Self {
         Self {
-
             path_formatter: PathFormatter::new(use_relative, no_path),
 
             include_headers: !no_path,
@@ -50,14 +51,12 @@ impl ContentAggregator {
             //     PathBuf::from converts a String (or &str) into a PathBuf (better path
             //         representation for file system paths)
             // .collect makes converted iterators back into a collection (vector)
-
             ignore: ignore.into_iter().map(std::path::PathBuf::from).collect(),
         }
     }
 
     /// Check if a path should be ignored
     fn is_ignored(&self, path: &Path) -> bool {
-
         // we take the ignore vector of PathBuf and create iterators
         //     these yield references to each ignored path in the vector
         // .any returns true if the closure returns true for ANY element in the iterator
@@ -70,74 +69,65 @@ impl ContentAggregator {
         //     this function returns true if the passed path is either a file in the ignored path
         //     or the ignored path is its prefix (starts with the ignored path)
 
-        self.ignore.iter().any(|ignore_path| {
-            path == ignore_path || path.starts_with(ignore_path)
-        })
+        self.ignore
+            .iter()
+            .any(|ignore_path| path == ignore_path || path.starts_with(ignore_path))
     }
 
-    /// Aggregate content from multiple paths
-    ///
-    /// about the arguments:
-    ///     every value in memory has a single owner function in rust
-    ///         this owner is responsible for cleaning it up when it ends
-    ///
-    ///     Borrowing lets other functions you call use the data of your function
-    ///         without transferring ownership
-    ///
-    ///     Two kinds of borrowing:
-    ///         Immutable borrow (&T) : This function will have a read only view of your data
-    ///         Mutable borrow : Only one part of your code can have a mutable reference to the
-    ///             data at one time
-    ///          Benefits of this are obvious in multithreaded code but in single threaded code the
-    ///          idea is:
-
-                    /// #include <stdio.h>
-                    ///
-                    /// void double_mut(int *a, int *b) {
-                    ///     *a += 10;
-                    ///     *b *= 2;
-                    /// }
-                    ///
-                    /// int main() {
-                    ///     int value = 5;
-                    ///     double_mut(&value, &value); // Two mutable pointers to same data
-                    ///     printf("%d\n", value);      // Output is unpredictable
-                    ///     return 0;
-                    /// }
-    
-    /// this sort of scenario is prevented by borrowing
-
-
-    ///
-    /// Here [String] is a slice of string values which means a sequence of strings
-    ///     this means [String] is vector/list etc  with zero or more strings in it
-    ///     &[String] is a borrowed reference to such a sequence
-
-
-
-    /// Here Result<T, E> is an enum for returning with error safety
-    /// It represents either an:
-    ///     Ok(T) : Wrapper around String class - contains the result string and ok message
-    ///     Err(E)  : Err variant that contanis an error value of type E.
-    ///
-    /// Ok(String) says the function was successful and here is the string Output
-    /// To use the String in Ok(String) you must unpack the string first
-    ///     to do this use a match which is something like:
-
-                    /// fn read_file_content(path: &str) -> Result<String, std::io::Error> {
-                    ///     // Try to read the file content as String
-                    ///     let content = std::fs::read_to_string(path)?;
-                    ///     // On success, wrap it in Ok and return
-                    ///     Ok(content)
-                    /// }
-                    ///
-                    /// fn main() {
-                    ///     match read_file_content("file.txt") {
-                    ///         Ok(text) => println!("File contents: {}", text),
-                    ///         Err(e) => eprintln!("Error reading file: {}", e),
-                    ///     }
-                    /// }
-
+    // Aggregate content from multiple paths
+    //
+    // about the arguments:
+    //     every value in memory has a single owner function in rust
+    //         this owner is responsible for cleaning it up when it ends
+    //
+    //     Borrowing lets other functions you call use the data of your function
+    //         without transferring ownership
+    //
+    //     Two kinds of borrowing:
+    //         Immutable borrow (&T) : This function will have a read only view of your data
+    //         Mutable borrow : Only one part of your code can have a mutable reference to the
+    //             data at one time
+    //          Benefits of this are obvious in multithreaded code but in single threaded code the
+    //          idea is:
+    // #include <stdio.h>
+    //
+    // void double_mut(int *a, int *b) {
+    //     *a += 10;
+    //     *b *= 2;
+    // }
+    //
+    // int main() {
+    //     int value = 5;
+    //     double_mut(&value, &value); // Two mutable pointers to same data
+    //     printf("%d\n", value);      // Output is unpredictable
+    //     return 0;
+    // }
+    // this sort of scenario is prevented by borrowing
+    //
+    // Here [String] is a slice of string values which means a sequence of strings
+    //     this means [String] is vector/list etc  with zero or more strings in it
+    //     &[String] is a borrowed reference to such a sequence
+    // Here Result<T, E> is an enum for returning with error safety
+    // It represents either an:
+    //     Ok(T) : Wrapper around String class - contains the result string and ok message
+    //     Err(E)  : Err variant that contanis an error value of type E.
+    //
+    // Ok(String) says the function was successful and here is the string Output
+    // To use the String in Ok(String) you must unpack the string first
+    //     to do this use a match which is something like:
+    // fn read_file_content(path: &str) -> Result<String, std::io::Error> {
+    //     // Try to read the file content as String
+    //     let content = std::fs::read_to_string(path)?;
+    //     // On success, wrap it in Ok and return
+    //     Ok(content)
+    // }
+    //
+    // fn main() {
+    //     match read_file_content("file.txt") {
+    //         Ok(text) => println!("File contents: {}", text),
+    //         Err(e) => eprintln!("Error reading file: {}", e),
+    //     }
+    // }
 
     pub fn aggregate_paths(&mut self, paths: &[String]) -> Result<String> {
         let mut content = String::new();
@@ -172,7 +162,10 @@ impl ContentAggregator {
             if path.is_file() {
                 self.aggregate_file(path, &mut content)?;
             } else if path.is_dir() {
-                if !self.include_hidden_in_dirs && self.is_hidden_file(path) && !self.is_explicit_path(path, paths) {
+                if !self.include_hidden_in_dirs
+                    && self.is_hidden_file(path)
+                    && !self.is_explicit_path(path, paths)
+                {
                     continue;
                 }
                 self.aggregate_directory(path, &mut content)?;
@@ -202,12 +195,10 @@ impl ContentAggregator {
     ///     this means no meaningful return value is returned, just the idea of success is conveyed
 
     fn aggregate_file(&mut self, path: &Path, content: &mut String) -> Result<()> {
-        
         // the read_to_string function tries to read the entire content of the file at the path
         // it returns a Result<String, std::io::Error> which we need to check with match
 
         match fs::read_to_string(path) {
-
             // if the file was read successfully:
             //     check if we need to include the header
             //         if yes, use te path formatting to format the path
@@ -215,7 +206,6 @@ impl ContentAggregator {
             //     then put in the entire successfully read content.
             //     after that we put a new line if the file doesnt already end with one
             //     since the file is new done, increase file count
-
             Ok(file_content) => {
                 if self.include_headers {
                     content.push_str(&self.path_formatter.format_path(path));
@@ -225,7 +215,7 @@ impl ContentAggregator {
                     content.push('\n');
                 }
                 self.file_count += 1;
-            },
+            }
 
             // if there was a problem reading (like non UTF-8 characters then eprintln the error)
             Err(e) => {
@@ -241,7 +231,6 @@ impl ContentAggregator {
 
     /// Aggregate content from a directory recursively
     fn aggregate_directory(&mut self, dir_path: &Path, content: &mut String) -> Result<()> {
-
         // we are making local copies of include_hidden and ignore
         // this makes it easier for closures to use this stuff
         // closures borrow by reerencing instead of moving so direct use also fine, just cleaner
@@ -256,7 +245,6 @@ impl ContentAggregator {
         // unwrap_or extracts the bool value from the Some(true) or Some(false)
         // if any step returned error then it defaults to false
 
-
         let is_hidden = |path: &Path| {
             path.file_name()
                 .and_then(|name| name.to_str())
@@ -264,13 +252,14 @@ impl ContentAggregator {
                 .unwrap_or(false)
         };
 
-
         let is_ignored = |path: &Path| {
-            ignore.iter().any(|ignore_path| path == ignore_path || path.starts_with(ignore_path))
+            ignore
+                .iter()
+                .any(|ignore_path| path == ignore_path || path.starts_with(ignore_path))
         };
 
         // WalkDir::new(dir_path) new directory walker which recursively explores dir_path
-        // follow_links(true) configures walker to treat symbolic links as real 
+        // follow_links(true) configures walker to treat symbolic links as real
         // WARNING: following symbolic link can cause loop
         // filter_entry is applies this filtering closure on every entry in the walk
         //     for each entry we check if the path is in ignored and return false
@@ -308,7 +297,6 @@ impl ContentAggregator {
         // similarly we have second checks for ignored and hidden
         // NOTE: The tests for ignored and hidden can be removed here since already done
         // in aggregate paths
-
 
         for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -353,7 +341,9 @@ mod tests {
         fs::write(&file_path, "Hello, World!").unwrap();
 
         let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
-        let content = aggregator.aggregate_paths(&[file_path.to_str().unwrap().to_string()]).unwrap();
+        let content = aggregator
+            .aggregate_paths(&[file_path.to_str().unwrap().to_string()])
+            .unwrap();
 
         assert!(content.contains("Hello, World!"));
         assert!(content.contains("--- File:"));
@@ -367,7 +357,9 @@ mod tests {
         fs::write(&file_path, "Hello, World!").unwrap();
 
         let mut aggregator = ContentAggregator::new(false, true, false, vec![]);
-        let content = aggregator.aggregate_paths(&[file_path.to_str().unwrap().to_string()]).unwrap();
+        let content = aggregator
+            .aggregate_paths(&[file_path.to_str().unwrap().to_string()])
+            .unwrap();
 
         assert!(content.contains("Hello, World!"));
         assert!(!content.contains("--- File:"));
@@ -379,15 +371,17 @@ mod tests {
         let dir = tempdir().unwrap();
         let subdir = dir.path().join("subdir");
         fs::create_dir(&subdir).unwrap();
-        
+
         let file1 = dir.path().join("file1.txt");
         let file2 = subdir.join("file2.txt");
-        
+
         fs::write(&file1, "File 1 content").unwrap();
         fs::write(&file2, "File 2 content").unwrap();
 
         let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
-        let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
+        let content = aggregator
+            .aggregate_paths(&[dir.path().to_str().unwrap().to_string()])
+            .unwrap();
 
         assert!(content.contains("File 1 content"));
         assert!(content.contains("File 2 content"));
@@ -398,9 +392,12 @@ mod tests {
     fn test_aggregate_nonexistent_path() {
         let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
         let result = aggregator.aggregate_paths(&["nonexistent_file.txt".to_string()]);
-        
+
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Path does not exist"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Path does not exist"));
     }
 
     #[test]
@@ -408,12 +405,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let visible_file = dir.path().join("visible.txt");
         let hidden_file = dir.path().join(".hidden.txt");
-        
+
         fs::write(&visible_file, "Visible content").unwrap();
         fs::write(&hidden_file, "Hidden content").unwrap();
 
         let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
-        let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
+        let content = aggregator
+            .aggregate_paths(&[dir.path().to_str().unwrap().to_string()])
+            .unwrap();
 
         assert!(content.contains("Visible content"));
         assert!(!content.contains("Hidden content"));
@@ -425,12 +424,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let visible_file = dir.path().join("visible.txt");
         let hidden_file = dir.path().join(".hidden.txt");
-        
+
         fs::write(&visible_file, "Visible content").unwrap();
         fs::write(&hidden_file, "Hidden content").unwrap();
 
         let mut aggregator = ContentAggregator::new(false, false, true, vec![]);
-        let content = aggregator.aggregate_paths(&[dir.path().to_str().unwrap().to_string()]).unwrap();
+        let content = aggregator
+            .aggregate_paths(&[dir.path().to_str().unwrap().to_string()])
+            .unwrap();
 
         assert!(content.contains("Visible content"));
         assert!(content.contains("Hidden content"));
@@ -444,9 +445,11 @@ mod tests {
         fs::write(&hidden_file, "Hidden content").unwrap();
 
         let mut aggregator = ContentAggregator::new(false, false, false, vec![]);
-        let content = aggregator.aggregate_paths(&[hidden_file.to_str().unwrap().to_string()]).unwrap();
+        let content = aggregator
+            .aggregate_paths(&[hidden_file.to_str().unwrap().to_string()])
+            .unwrap();
 
         assert!(content.contains("Hidden content"));
         assert_eq!(aggregator.file_count(), 1);
     }
-} 
+}

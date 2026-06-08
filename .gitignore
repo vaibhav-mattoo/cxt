@@ -23,4 +23,8 @@ target/
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db 
+Thumbs.db
+
+# Profiling artifacts
+mock_repo/
+dhat-heap.json
