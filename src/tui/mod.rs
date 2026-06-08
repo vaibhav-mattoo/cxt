@@ -40,14 +40,10 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
         if app.mode != AppMode::Normal {
             app.sync_search_scroll(app.visible_height);
         }
-        let token_estimate: usize = if app.selected.is_empty() {
-            0
-        } else {
-            app.estimated_tokens()
-        };
+        let file_count = app.selected_file_count();
         let mut rendered_height: u16 = 0;
         terminal.draw(|f| {
-            rendered_height = render::draw(f, &mut app, &message, token_estimate);
+            rendered_height = render::draw(f, &mut app, &message, file_count);
         })?;
         app.visible_height = rendered_height as usize;
         terminal.backend_mut().flush()?;

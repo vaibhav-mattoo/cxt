@@ -24,9 +24,15 @@ crossterm = "0.29"
 wild = "2"
 ignore = "0.4"
 image = { version = "0.25", default-features = false, features = [
-    "jpeg", "png", "gif", "bmp", "webp", "tiff", "ico"
+  "jpeg",
+  "png",
+  "gif",
+  "bmp",
+  "webp",
+  "tiff",
+  "ico",
 ] }
-tiktoken-rs = "0.5"
+tiktoken-rs = "0.12"
 tui-tree-widget = "0.24"
 fuzzy-matcher = "0.3"
 dhat = { version = "0.3", optional = true }

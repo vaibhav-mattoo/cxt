@@ -28,9 +28,9 @@ const HELP_ITEMS: &[(&str, &str)] = &[
 ];
 
 /// Render the full TUI frame and return the inner file-list height in rows.
-pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, token_estimate: usize) -> u16 {
+pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize) -> u16 {
     let help_lines = build_help_lines(f.area().width, app);
-    let status_line_height: u16 = if !app.selected.is_empty() { 1 } else { 0 };
+    let status_line_height: u16 = if file_count > 0 { 1 } else { 0 };
     let help_height = help_lines.len().max(1) as u16 + 2 + status_line_height;
 
     let chunks = Layout::default()
@@ -47,7 +47,7 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, token_estimate: us
 
     render_path_bar(f, app, chunks[0]);
     render_file_list(f, app, chunks[1], inner_list_height as usize);
-    render_help_footer(f, message, &help_lines, chunks[2], token_estimate, app.selected.len());
+    render_help_footer(f, message, &help_lines, chunks[2], file_count);
 
     inner_list_height
 }
@@ -189,7 +189,6 @@ fn render_help_footer(
     message: &str,
     help_lines: &[Line<'static>],
     area: Rect,
-    token_estimate: usize,
     selected_count: usize,
 ) {
     let help_title = Span::styled(
@@ -201,10 +200,9 @@ fn render_help_footer(
     let status_line: Option<Line<'static>> = if selected_count > 0 {
         Some(Line::from(vec![Span::styled(
             format!(
-                " {} file{}  ~{} tokens",
+                " {} file{} selected",
                 selected_count,
                 if selected_count == 1 { "" } else { "s" },
-                crate::token_counter::format_count(token_estimate),
             ),
             Style::default()
                 .fg(Color::Green)

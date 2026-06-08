@@ -39,7 +39,7 @@ pub struct AppState {
     pub visible_height: usize,
     pub original_cursor: usize,
     pub original_scroll_offset: usize,
-    token_estimate_cache: Option<usize>,
+    selected_file_count_cache: Option<usize>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -80,7 +80,7 @@ impl AppState {
             visible_height: 10,
             original_cursor: 0,
             original_scroll_offset: 0,
-            token_estimate_cache: None,
+            selected_file_count_cache: None,
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -115,7 +115,7 @@ impl AppState {
     }
 
     pub fn toggle_selection(&mut self, path: PathBuf, is_dir: bool) {
-        self.token_estimate_cache = None;
+        self.selected_file_count_cache = None;
         if self.selected.contains(&path) {
             self.selected.remove(&path);
             if is_dir {
@@ -132,18 +132,6 @@ impl AppState {
         }
     }
 
-    /// Returns an estimated token count for the current selection.
-    /// Uses file-size / 4 approximation — fast, no file reads.
-    /// Result is cached until the selection or directory changes.
-    pub fn estimated_tokens(&mut self) -> usize {
-        if let Some(cached) = self.token_estimate_cache {
-            return cached;
-        }
-        let estimate = compute_token_estimate(&self.selected, &self.deselected);
-        self.token_estimate_cache = Some(estimate);
-        estimate
-    }
-
     pub fn collect_selected_paths(&self) -> Vec<String> {
         let mut final_paths = Vec::new();
         for path in &self.selected {
@@ -157,6 +145,7 @@ impl AppState {
                             .build()
                             .filter_map(|e| e.ok())
                             .filter(|e| e.path() != path)
+                            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
                             .filter(|e| !self.deselected.iter().any(|d| e.path().starts_with(d)))
                             .map(|e| e.path().to_string_lossy().to_string())
                             .collect();
@@ -168,6 +157,18 @@ impl AppState {
             }
         }
         final_paths
+    }
+
+    /// Returns the number of concrete files the current selection resolves to.
+    /// Walks selected directories and respects deselected sub-paths.
+    /// Result is cached until the selection changes.
+    pub fn selected_file_count(&mut self) -> usize {
+        if let Some(cached) = self.selected_file_count_cache {
+            return cached;
+        }
+        let count = self.collect_selected_paths().len();
+        self.selected_file_count_cache = Some(count);
+        count
     }
 
     /// Returns the path currently highlighted in the tree cursor.
@@ -204,7 +205,6 @@ impl AppState {
 
     /// Change the tree root to the parent directory of root_dir.
     pub fn go_up_root(&mut self) {
-        self.token_estimate_cache = None;
         if let Some(parent) = self.root_dir.parent() {
             let old_root = self.root_dir.clone();
             let parent_path = parent.to_path_buf();
@@ -222,7 +222,6 @@ impl AppState {
 
     /// Navigate into a directory from search mode (sets root_dir, resets tree).
     pub fn navigate_to_dir(&mut self, path: PathBuf) {
-        self.token_estimate_cache = None;
         self.root_dir = path.clone();
         self.ensure_dir_loaded(&path);
         self.tree_state = tui_tree_widget::TreeState::default();
@@ -386,38 +385,3 @@ pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<fs::DirEntry>> {
     Ok(entries)
 }
 
-fn compute_token_estimate(
-    selected: &std::collections::HashSet<std::path::PathBuf>,
-    deselected: &std::collections::HashSet<std::path::PathBuf>,
-) -> usize {
-    let mut total: usize = 0;
-    for path in selected {
-        if deselected.iter().any(|d| path.starts_with(d)) {
-            continue;
-        }
-        let Ok(meta) = std::fs::metadata(path) else {
-            continue;
-        };
-        if meta.is_dir() {
-            let walker = ignore::WalkBuilder::new(path)
-                .hidden(false)
-                .git_ignore(false)
-                .follow_links(true)
-                .build();
-            for entry in walker.filter_map(|e| e.ok()) {
-                if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                    let entry_path = entry.path();
-                    if deselected.iter().any(|d| entry_path.starts_with(d)) {
-                        continue;
-                    }
-                    if let Ok(entry_meta) = entry.metadata() {
-                        total += crate::token_counter::estimate_from_bytes(entry_meta.len());
-                    }
-                }
-            }
-        } else {
-            total += crate::token_counter::estimate_from_bytes(meta.len());
-        }
-    }
-    total
-}

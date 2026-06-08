@@ -84,9 +84,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.98"
+version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
+checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "approx"
@@ -164,12 +164,6 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.21.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
-
-[[package]]
-name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -180,7 +174,16 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0700ddab506f33b20a03b13996eccd309a48e5ff77d0d95926aa0210fb4e95f1"
 dependencies = [
- "bit-vec",
+ "bit-vec 0.6.3",
+]
+
+[[package]]
+name = "bit-set"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
+dependencies = [
+ "bit-vec 0.8.0",
 ]
 
 [[package]]
@@ -188,6 +191,12 @@ name = "bit-vec"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
+
+[[package]]
+name = "bit-vec"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitflags"
@@ -212,9 +221,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.12.0"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
+checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
 dependencies = [
  "memchr",
  "regex-automata",
@@ -562,7 +571,7 @@ dependencies = [
  "lazy_static",
  "mintex",
  "parking_lot",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "serde",
  "serde_json",
  "thousands",
@@ -664,18 +673,19 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b95f7c0680e4142284cf8b22c14a476e87d61b004a3a0861872b32ef7ead40a2"
 dependencies = [
- "bit-set",
+ "bit-set 0.5.3",
  "regex",
 ]
 
 [[package]]
 name = "fancy-regex"
-version = "0.12.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7493d4c459da9f84325ad297371a6b2b8a162800873a22e3b6b6512e61d18c05"
+checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
 dependencies = [
- "bit-set",
- "regex",
+ "bit-set 0.8.0",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -1746,9 +1756,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.11.1"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b544ef1b4eac5dc2db33ea63606ae9ffcfac26c1416a2806ae0bf5f56b201191"
+checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1758,9 +1768,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.9"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "809e8dc61f6de73b46c85f4c96486310fe304c434cfa43669d7b40f711150908"
+checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1784,6 +1794,12 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
 
 [[package]]
 name = "rustc_version"
@@ -2069,7 +2085,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4676b37242ccbd1aabf56edb093a4827dc49086c0ffd764a5705899e0f35f8f7"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64",
  "bitflags 2.13.0",
  "fancy-regex 0.11.0",
  "filedescriptor",
@@ -2172,17 +2188,17 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.5.9"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c314e7ce51440f9e8f5a497394682a57b7c323d0f4d0a6b1b13c429056e0e234"
+checksum = "027853bbf8c7763b77c5c595f1c271c7d536ced7d6f83452911b944621e57fc2"
 dependencies = [
  "anyhow",
- "base64 0.21.7",
+ "base64",
  "bstr",
- "fancy-regex 0.12.0",
+ "fancy-regex 0.17.0",
  "lazy_static",
- "parking_lot",
- "rustc-hash",
+ "regex",
+ "rustc-hash 2.1.2",
 ]
 
 [[package]]
