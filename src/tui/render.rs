@@ -1,8 +1,8 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, List, ListItem, Padding, Paragraph, Wrap},
     Frame,
 };
 use std::{
@@ -13,6 +13,7 @@ use std::{
 use tui_tree_widget::{Tree, TreeItem};
 
 use crate::tui::app::{AppMode, AppState};
+use super::theme;
 
 const HELP_ITEMS: &[(&str, &str)] = &[
     ("↑/k", "Move up"),
@@ -26,6 +27,24 @@ const HELP_ITEMS: &[(&str, &str)] = &[
     ("c", "Confirm"),
     ("q/Ctrl-c", "Quit"),
 ];
+
+fn panel(title: &str, focused: bool) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(if focused {
+            theme::BORDER_FOCUS
+        } else {
+            theme::BORDER
+        }))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default()
+                .fg(theme::MUTED)
+                .add_modifier(Modifier::BOLD),
+        ))
+}
 
 /// Render the full TUI frame and return the inner file-list height in rows.
 pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize) -> u16 {
@@ -62,8 +81,8 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
         };
         let style = if app.mode == AppMode::SearchFocused {
             Style::default()
-                .fg(Color::Yellow)
-                .bg(Color::DarkGray)
+                .fg(theme::MATCH)
+                .bg(theme::CURSOR_BG)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
@@ -92,18 +111,8 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
         (path, title_str, Style::default())
     };
 
-    let current_dir_title = Span::styled(
-        title_str,
-        Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::BOLD),
-    );
     let path_widget = Paragraph::new(path)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(current_dir_title),
-        )
+        .block(panel(&title_str, app.mode != AppMode::Normal))
         .style(path_style)
         .wrap(Wrap { trim: true });
     f.render_widget(path_widget, area);
@@ -112,7 +121,7 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
 fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
     if app.mode != AppMode::Normal {
         let match_style = Style::default()
-            .fg(Color::Cyan)
+            .fg(theme::MATCH)
             .add_modifier(Modifier::BOLD);
         let items: Vec<ListItem> = app
             .search_results
@@ -126,28 +135,46 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
                     display_text.push('/');
                 }
                 let is_cursor = i == app.search_cursor;
-                let base_style = item_style(app, &result.path, result.is_dir, false);
-                let line = highlight_matches(
+                let is_selected = (app.selected.contains(&result.path)
+                    && !app.deselected.contains(&result.path))
+                    || app.is_implicitly_selected(&result.path);
+
+                let marker = if is_selected { "✓ " } else { "  " };
+                let base_style = if result.is_dir {
+                    Style::default().fg(theme::DIR)
+                } else {
+                    Style::default().fg(theme::FG)
+                };
+
+                let mut line = highlight_matches(
                     &display_text,
                     &result.match_indices,
                     base_style,
                     match_style,
                 );
-                ListItem::new(line).style(if is_cursor {
-                    item_style(app, &result.path, result.is_dir, true)
+                line.spans.insert(
+                    0,
+                    Span::styled(
+                        marker.to_string(),
+                        Style::default()
+                            .fg(theme::SELECTED)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                );
+
+                let cursor_style = if is_cursor {
+                    Style::default()
+                        .bg(theme::CURSOR_BG)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                })
+                };
+
+                ListItem::new(line).style(cursor_style)
             })
             .collect();
-        let title = Span::styled(
-            format!("Search Results ({} found)", app.search_results.len()),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-        let list =
-            List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+
+        let list = List::new(items).block(panel("Files", app.mode != AppMode::Normal));
         f.render_widget(list, area);
         return;
     }
@@ -162,25 +189,18 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
         &app.deselected,
     );
 
-    let title = Span::styled(
-        "Files (Space: select, ←/h: collapse, →/l: expand, Enter: toggle, Backspace: parent)",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    );
-
     let Ok(tree_widget) = Tree::new(&items) else {
-        f.render_widget(Block::default().borders(Borders::ALL).title(title), area);
+        f.render_widget(panel("Files", true), area);
         return;
     };
     let tree_widget = tree_widget
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(panel("Files", app.mode == AppMode::Normal))
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::REVERSED),
+                .bg(theme::CURSOR_BG)
+                .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("");
+        .highlight_symbol("▎ ");
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
@@ -194,7 +214,7 @@ fn render_help_footer(
     let help_title = Span::styled(
         "Help",
         Style::default()
-            .fg(Color::Magenta)
+            .fg(theme::MUTED)
             .add_modifier(Modifier::BOLD),
     );
     let status_line: Option<Line<'static>> = if selected_count > 0 {
@@ -205,7 +225,7 @@ fn render_help_footer(
                 if selected_count == 1 { "" } else { "s" },
             ),
             Style::default()
-                .fg(Color::Green)
+                .fg(theme::SELECTED)
                 .add_modifier(Modifier::BOLD),
         )]))
     } else {
@@ -236,34 +256,6 @@ fn render_help_footer(
             .wrap(Wrap { trim: true })
     };
     f.render_widget(footer_widget, area);
-}
-
-fn item_style(app: &AppState, path: &std::path::Path, is_dir: bool, is_cursor: bool) -> Style {
-    let is_selected = (app.selected.contains(path) && !app.deselected.contains(path))
-        || app.is_implicitly_selected(path);
-
-    let mut style = if is_dir {
-        Style::default().fg(Color::Blue)
-    } else {
-        Style::default()
-    };
-
-    if is_selected {
-        style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
-    }
-
-    if is_cursor {
-        if is_selected && is_dir {
-            style = style
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::REVERSED | Modifier::BOLD);
-        } else {
-            style = style.fg(Color::Yellow).add_modifier(Modifier::REVERSED);
-        }
-    }
-
-    style
 }
 
 fn build_help_lines(width: u16, app: &AppState) -> Vec<Line<'static>> {
@@ -321,12 +313,14 @@ fn build_help_lines(width: u16, app: &AppState) -> Vec<Line<'static>> {
         }
         spans.push(Span::styled(
             key_str.clone(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::BORDER_FOCUS)
+                .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(": ", Style::default().fg(Color::White)));
+        spans.push(Span::styled(": ", Style::default().fg(theme::MUTED)));
         spans.push(Span::styled(
             desc.to_string(),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme::FG),
         ));
         current_width += key_str.len() + 2 + desc_str.len();
     }
@@ -409,18 +403,21 @@ fn build_styled_tree_items(
             });
             let is_selected = is_directly_selected || is_implicit;
 
-            let base_style = if is_dir {
-                Style::default().fg(Color::Blue)
+            let marker = if is_selected { "✓ " } else { "  " };
+            let name_style = if is_dir {
+                Style::default().fg(theme::DIR)
             } else {
-                Style::default()
+                Style::default().fg(theme::FG)
             };
-            let style = if is_selected {
-                base_style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-            } else {
-                base_style
-            };
-
-            let text = Text::styled(display_name, style);
+            let text = Line::from(vec![
+                Span::styled(
+                    marker,
+                    Style::default()
+                        .fg(theme::SELECTED)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(display_name, name_style),
+            ]);
 
             if is_dir {
                 let is_open = open.iter().any(|kp| kp.last() == Some(&path));
@@ -439,7 +436,7 @@ fn build_styled_tree_items(
                             .collect(),
                         // Not yet cached — dummy child so the ▶ indicator always shows.
                         None => vec![TreeItem::new_leaf(path.join("\0"), String::new())],
-                        _ => vec![], // confirmed empty directory
+                        _ => vec![],
                     }
                 };
                 TreeItem::new(path, text, children).ok()

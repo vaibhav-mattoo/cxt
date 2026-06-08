@@ -1,6 +1,7 @@
 mod app;
 mod events;
 mod render;
+mod theme;
 
 use anyhow::{Context, Result};
 use crossterm::{
