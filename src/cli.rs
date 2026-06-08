@@ -38,6 +38,26 @@ pub struct Args {
 
     #[arg(
         long,
+        value_name = "EXT[,EXT...]",
+        help = "Include only files with these extensions (e.g. --ext rs,toml). \
+                May be specified multiple times or comma-separated.",
+        action = clap::ArgAction::Append,
+    )]
+    pub ext: Vec<String>,
+
+    #[arg(
+        long,
+        value_name = "LANG[,LANG...]",
+        help = "Include only files for the given language(s) (e.g. --lang rust). \
+                Expands to that language's canonical extensions. \
+                Run `cxt --lang help` to list supported languages. \
+                May be specified multiple times or comma-separated.",
+        action = clap::ArgAction::Append,
+    )]
+    pub lang: Vec<String>,
+
+    #[arg(
+        long,
         help = "Output files in arbitrary order (faster for large directories; implies non-deterministic output)"
     )]
     pub no_sort: bool,
@@ -62,6 +82,26 @@ impl Args {
         for ignore_path in &self.ignore {
             if !std::path::Path::new(ignore_path).exists() {
                 return Err(format!("Ignore path does not exist: {ignore_path}"));
+            }
+        }
+        // Validate --lang values and handle the special "help" value.
+        for raw in &self.lang {
+            for token in raw.split(',') {
+                let token = token.trim();
+                if token.is_empty() {
+                    continue;
+                }
+                if token.eq_ignore_ascii_case("help") {
+                    continue; // handled in main.rs
+                }
+                if crate::lang::find(token).is_none() {
+                    return Err(format!(
+                        "Unknown language '{}'. Supported languages:\n  {}\n\
+                         Use --lang help to list all supported languages.",
+                        token,
+                        crate::lang::all_names().join(", ")
+                    ));
+                }
             }
         }
         Ok(())

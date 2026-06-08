@@ -15,6 +15,8 @@ pub struct ContentAggregator {
     token_counter: crate::token_counter::TokenCounter,
     ignore: Vec<PathBuf>,
     sort: bool,
+    /// Extensions to include. Empty means all files are allowed.
+    allowed_extensions: std::collections::HashSet<String>,
 }
 
 impl ContentAggregator {
@@ -23,6 +25,7 @@ impl ContentAggregator {
         include_hidden_in_dirs: bool,
         ignore: Vec<String>,
         sort: bool,
+        allowed_extensions: std::collections::HashSet<String>,
     ) -> Self {
         Self {
             formatter,
@@ -32,6 +35,7 @@ impl ContentAggregator {
             token_counter: crate::token_counter::TokenCounter::new(),
             ignore: ignore.into_iter().map(PathBuf::from).collect(),
             sort,
+            allowed_extensions,
         }
     }
 
@@ -39,6 +43,18 @@ impl ContentAggregator {
         self.ignore
             .iter()
             .any(|p| path == p || path.starts_with(p))
+    }
+
+    /// Returns true if `path` passes the extension filter.
+    /// When `allowed_extensions` is empty, all files pass.
+    fn extension_allowed(&self, path: &Path) -> bool {
+        if self.allowed_extensions.is_empty() {
+            return true;
+        }
+        match path.extension().and_then(|e| e.to_str()) {
+            Some(ext) => self.allowed_extensions.contains(&ext.to_lowercase()),
+            None => false,
+        }
     }
 
     pub fn aggregate_paths<W: Write>(&mut self, paths: &[String], writer: &mut W) -> Result<()> {
@@ -73,6 +89,9 @@ impl ContentAggregator {
 
     /// Aggregate a single file; canonicalises path before passing to formatter.
     fn aggregate_file<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
+        if !self.extension_allowed(path) {
+            return Ok(());
+        }
         let display_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         self.formatter.write_file_header(&display_path, writer)?;
         let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
@@ -155,6 +174,7 @@ impl ContentAggregator {
             .unwrap_or_else(|_| dir_path.to_path_buf());
 
         let ignore_list = self.ignore.clone();
+        let allowed_ext = self.allowed_extensions.clone();
         let (tx, rx) = mpsc::channel::<PathBuf>();
 
         let walker = WalkBuilder::new(&canon_dir)
@@ -166,6 +186,7 @@ impl ContentAggregator {
         walker.run(|| {
             let tx = tx.clone();
             let ignore_list = ignore_list.clone();
+            let allowed_ext = allowed_ext.clone();
             Box::new(move |result| {
                 use ignore::WalkState;
                 if let Ok(entry) = result {
@@ -173,7 +194,15 @@ impl ContentAggregator {
                     let ignored = ignore_list
                         .iter()
                         .any(|ig| path == ig || path.starts_with(ig));
-                    if !ignored && entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                    let allowed = if allowed_ext.is_empty() {
+                        true
+                    } else {
+                        path.extension()
+                            .and_then(|e| e.to_str())
+                            .map(|ext| allowed_ext.contains(&ext.to_lowercase()))
+                            .unwrap_or(false)
+                    };
+                    if !ignored && entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) && allowed {
                         let _ = tx.send(path.to_path_buf());
                     }
                 }
@@ -225,6 +254,7 @@ mod tests {
             false,
             vec![],
             true,
+            std::collections::HashSet::new(),
         )
     }
 
@@ -338,6 +368,7 @@ mod tests {
             true,
             vec![],
             true,
+            std::collections::HashSet::new(),
         );
         let mut buffer = Vec::new();
         aggregator

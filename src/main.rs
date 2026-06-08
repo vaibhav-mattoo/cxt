@@ -7,6 +7,7 @@ mod clipboard;
 mod content_aggregator;
 mod formatter;
 mod image_handler;
+mod lang;
 mod output_handler;
 mod token_counter;
 mod tui;
@@ -49,6 +50,25 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // Special case: --lang help prints supported languages and exits.
+    if args.lang.iter().any(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("help"))) {
+        println!("Supported languages for --lang:\n");
+        for name in lang::all_names() {
+            let def = lang::find(name).unwrap();
+            println!(
+                "  {:16} extensions: {}{}",
+                name,
+                def.extensions.join(", "),
+                if def.aliases.is_empty() {
+                    String::new()
+                } else {
+                    format!("  (aliases: {})", def.aliases.join(", "))
+                }
+            );
+        }
+        return Ok(());
+    }
+
     let paths: Vec<String> = if args.tui || args.paths.is_empty() {
         let selected = tui::run_tui()?;
         if selected.is_empty() {
@@ -78,12 +98,19 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let allowed_extensions = lang::build_extension_filter(&args.lang, &args.ext)
+        .unwrap_or_else(|e| {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        });
+
     let fmt = formatter::build_formatter(args.format, args.no_path, args.relative);
     let mut aggregator = ContentAggregator::new(
         fmt,
         args.hidden,
         args.ignore.clone().into_iter().collect::<Vec<_>>(),
         !args.no_sort,
+        allowed_extensions,
     );
 
     let mut output_handler = OutputHandler::new();
