@@ -35,6 +35,12 @@ pub struct Args {
 
     #[arg(short, long, help = "Ignore a file or directory", value_name = "PATH", action = clap::ArgAction::Append)]
     pub ignore: Vec<String>,
+
+    #[arg(
+        long,
+        help = "Output files in arbitrary order (faster for large directories; implies non-deterministic output)"
+    )]
+    pub no_sort: bool,
 }
 
 impl Args {

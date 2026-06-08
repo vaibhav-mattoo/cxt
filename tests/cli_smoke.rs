@@ -93,58 +93,71 @@ fn writes_content_to_file() {
     assert!(content.contains("Test content"));
 }
 
+// Wildcard expansion is handled by the shell on Linux/macOS (or by `wild` on Windows).
+// These tests pass explicit paths to verify the underlying aggregation logic.
 #[test]
-fn handles_wildcard_patterns() {
+fn handles_multiple_explicit_paths() {
     let dir = tempdir().unwrap();
     let file1 = dir.path().join("test1.py");
     let file2 = dir.path().join("test2.py");
     let file3 = dir.path().join("test.txt");
-    
+
     fs::write(&file1, "Python file 1").unwrap();
     fs::write(&file2, "Python file 2").unwrap();
     fs::write(&file3, "Text file").unwrap();
 
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["--ci", "-p", &format!("{}/*.py", dir.path().to_str().unwrap())])
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("Python file 1"))
-        .stdout(predicates::str::contains("Python file 2"))
-        .stdout(predicates::str::contains("Text file").not());
+    cmd.args([
+        "--ci",
+        "-p",
+        file1.to_str().unwrap(),
+        file2.to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .stdout(predicates::str::contains("Python file 1"))
+    .stdout(predicates::str::contains("Python file 2"))
+    .stdout(predicates::str::contains("Text file").not());
 }
 
 #[test]
-fn handles_nested_wildcard_patterns() {
+fn handles_multiple_explicit_paths_in_subdirectory() {
     let dir = tempdir().unwrap();
     let subdir = dir.path().join("subdir");
     fs::create_dir(&subdir).unwrap();
-    
+
     let file1 = subdir.join("app.cpp");
     let file2 = subdir.join("main.cpp");
     let file3 = subdir.join("helper.h");
-    
+
     fs::write(&file1, "C++ app file").unwrap();
     fs::write(&file2, "C++ main file").unwrap();
     fs::write(&file3, "Header file").unwrap();
 
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["--ci", "-p", &format!("{}/*/*.cpp", dir.path().to_str().unwrap())])
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("C++ app file"))
-        .stdout(predicates::str::contains("C++ main file"))
-        .stdout(predicates::str::contains("Header file").not());
+    cmd.args([
+        "--ci",
+        "-p",
+        file1.to_str().unwrap(),
+        file2.to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .stdout(predicates::str::contains("C++ app file"))
+    .stdout(predicates::str::contains("C++ main file"))
+    .stdout(predicates::str::contains("Header file").not());
 }
 
 #[test]
 fn handles_no_matching_files() {
     let dir = tempdir().unwrap();
-    let file = dir.path().join("test.txt");
-    fs::write(&file, "Test content").unwrap();
-
+    // A literal unexpanded glob is a path that does not exist — expect an error.
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["--ci", &format!("{}/*.nonexistent", dir.path().to_str().unwrap())])
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("No files found matching the specified patterns"));
+    cmd.args([
+        "--ci",
+        &format!("{}/*.nonexistent", dir.path().to_str().unwrap()),
+    ])
+    .assert()
+    .failure()
+    .stderr(predicates::str::contains("Path does not exist"));
 }

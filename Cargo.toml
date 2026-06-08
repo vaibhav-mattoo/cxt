@@ -23,6 +23,7 @@ pathdiff = "0.2.3"
 ratatui = "0.30"
 crossterm = "0.29"
 wild = "2"
+ignore = "0.4"
 dhat = { version = "0.3", optional = true }
 
 [features]
