@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -42,6 +43,7 @@ pub struct AppState {
     pub original_scroll_offset: usize,
     selected_file_count_cache: Option<usize>,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
+    dir_files_cache: RefCell<HashMap<PathBuf, Rc<Vec<PathBuf>>>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -84,6 +86,7 @@ impl AppState {
             original_scroll_offset: 0,
             selected_file_count_cache: None,
             dir_select_cache: RefCell::new(HashMap::new()),
+            dir_files_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -135,15 +138,33 @@ impl AppState {
         }
     }
 
+    fn files_under_cached(&self, dir: &Path) -> Rc<Vec<PathBuf>> {
+        if let Some(v) = self.dir_files_cache.borrow().get(dir) {
+            return Rc::clone(v);
+        }
+        let files = Rc::new(files_under(dir));
+        self.dir_files_cache
+            .borrow_mut()
+            .insert(dir.to_path_buf(), Rc::clone(&files));
+        files
+    }
+
     /// True iff dir has at least one descendant file and ALL are selected.
     /// Result is cached until the next selection change.
     pub fn dir_fully_selected(&self, dir: &Path) -> bool {
-        let cached = self.dir_select_cache.borrow().get(dir).copied();
-        if let Some(v) = cached {
+        if self.selected.is_empty() {
+            return false;
+        }
+        if let Some(v) = self.dir_select_cache.borrow().get(dir).copied() {
             return v;
         }
-        let files = files_under(dir);
-        let result = !files.is_empty() && files.iter().all(|f| self.selected.contains(f));
+        let has_selected_descendant = self.selected.iter().any(|s| s.starts_with(dir));
+        let result = if !has_selected_descendant {
+            false
+        } else {
+            let files = self.files_under_cached(dir);
+            !files.is_empty() && files.iter().all(|f| self.selected.contains(f))
+        };
         self.dir_select_cache
             .borrow_mut()
             .insert(dir.to_path_buf(), result);
