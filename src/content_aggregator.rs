@@ -4,10 +4,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+/// Files larger than this use byte estimation instead of exact BPE counting.
+const MAX_EXACT_BYTES: u64 = 5 * 1024 * 1024; // 5 MB
+
 pub struct ContentAggregator {
     formatter: Box<dyn crate::formatter::Formatter>,
     include_hidden_in_dirs: bool,
     file_count: usize,
+    token_count: usize,
+    token_counter: crate::token_counter::TokenCounter,
     ignore: Vec<PathBuf>,
     sort: bool,
 }
@@ -23,6 +28,8 @@ impl ContentAggregator {
             formatter,
             include_hidden_in_dirs,
             file_count: 0,
+            token_count: 0,
+            token_counter: crate::token_counter::TokenCounter::new(),
             ignore: ignore.into_iter().map(PathBuf::from).collect(),
             sort,
         }
@@ -68,15 +75,32 @@ impl ContentAggregator {
     fn aggregate_file<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
         let display_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         self.formatter.write_file_header(&display_path, writer)?;
-        let mut file = match fs::File::open(path) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("Warning: Failed to read file '{}': {e}", path.display());
-                return Ok(());
+        let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_size <= MAX_EXACT_BYTES {
+            let content = match fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    eprintln!("Warning: Failed to read file '{}': {e}", path.display());
+                    return Ok(());
+                }
+            };
+            let text = String::from_utf8_lossy(&content);
+            self.token_count += self.token_counter.count(&text);
+            if let Err(e) = writer.write_all(&content) {
+                eprintln!("Warning: Failed to write file '{}': {e}", path.display());
             }
-        };
-        if let Err(e) = std::io::copy(&mut file, writer) {
-            eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
+        } else {
+            self.token_count += crate::token_counter::estimate_from_bytes(file_size);
+            let mut file = match fs::File::open(path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("Warning: Failed to read file '{}': {e}", path.display());
+                    return Ok(());
+                }
+            };
+            if let Err(e) = std::io::copy(&mut file, writer) {
+                eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
+            }
         }
         writer.write_all(self.formatter.file_footer().as_bytes())?;
         self.file_count += 1;
@@ -87,15 +111,32 @@ impl ContentAggregator {
     /// Called from `aggregate_directory` which pre-canonicalises the base directory once.
     fn aggregate_file_precanon<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
         self.formatter.write_file_header(path, writer)?;
-        let mut file = match fs::File::open(path) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("Warning: Failed to read file '{}': {e}", path.display());
-                return Ok(());
+        let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_size <= MAX_EXACT_BYTES {
+            let content = match fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    eprintln!("Warning: Failed to read file '{}': {e}", path.display());
+                    return Ok(());
+                }
+            };
+            let text = String::from_utf8_lossy(&content);
+            self.token_count += self.token_counter.count(&text);
+            if let Err(e) = writer.write_all(&content) {
+                eprintln!("Warning: Failed to write file '{}': {e}", path.display());
             }
-        };
-        if let Err(e) = std::io::copy(&mut file, writer) {
-            eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
+        } else {
+            self.token_count += crate::token_counter::estimate_from_bytes(file_size);
+            let mut file = match fs::File::open(path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("Warning: Failed to read file '{}': {e}", path.display());
+                    return Ok(());
+                }
+            };
+            if let Err(e) = std::io::copy(&mut file, writer) {
+                eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
+            }
         }
         writer.write_all(self.formatter.file_footer().as_bytes())?;
         self.file_count += 1;
@@ -164,6 +205,10 @@ impl ContentAggregator {
 
     pub fn file_count(&self) -> usize {
         self.file_count
+    }
+
+    pub fn token_count(&self) -> usize {
+        self.token_count
     }
 }
 

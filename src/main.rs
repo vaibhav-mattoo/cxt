@@ -8,6 +8,7 @@ mod content_aggregator;
 mod formatter;
 mod image_handler;
 mod output_handler;
+mod token_counter;
 mod tui;
 
 use cli::Args;
@@ -92,7 +93,8 @@ fn main() -> Result<()> {
         let mut file = std::fs::File::create(file_path)?;
         aggregator.aggregate_paths(&paths, &mut file)?;
         println!(
-            "Wrote content from {} files to {}",
+            "Wrote {} tokens from {} files to {}.",
+            token_counter::format_count(aggregator.token_count()),
             aggregator.file_count(),
             file_path
         );
@@ -126,7 +128,8 @@ fn main() -> Result<()> {
 
         cw.finish()?;
         println!(
-            "Copied content from {} files to clipboard.",
+            "Copied {} tokens from {} files to clipboard.",
+            token_counter::format_count(aggregator.token_count()),
             aggregator.file_count()
         );
     }

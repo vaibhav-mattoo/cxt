@@ -26,6 +26,7 @@ ignore = "0.4"
 image = { version = "0.25", default-features = false, features = [
     "jpeg", "png", "gif", "bmp", "webp", "tiff", "ico"
 ] }
+tiktoken-rs = "0.5"
 dhat = { version = "0.3", optional = true }
 
 [features]

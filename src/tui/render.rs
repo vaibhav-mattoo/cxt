@@ -21,9 +21,10 @@ const HELP_ITEMS: &[(&str, &str)] = &[
 ];
 
 /// Render the full TUI frame and return the inner file-list height in rows.
-pub fn draw(f: &mut Frame, app: &AppState, message: &str) -> u16 {
+pub fn draw(f: &mut Frame, app: &AppState, message: &str, token_estimate: usize) -> u16 {
     let help_lines = build_help_lines(f.area().width, app);
-    let help_height = help_lines.len().max(1) as u16 + 2;
+    let status_line_height: u16 = if !app.selected.is_empty() { 1 } else { 0 };
+    let help_height = help_lines.len().max(1) as u16 + 2 + status_line_height;
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -39,7 +40,7 @@ pub fn draw(f: &mut Frame, app: &AppState, message: &str) -> u16 {
 
     render_path_bar(f, app, chunks[0]);
     render_file_list(f, app, chunks[1], inner_list_height as usize);
-    render_help_footer(f, message, &help_lines, chunks[2]);
+    render_help_footer(f, message, &help_lines, chunks[2], token_estimate, app.selected.len());
 
     inner_list_height
 }
@@ -158,26 +159,58 @@ fn render_file_list(f: &mut Frame, app: &AppState, area: Rect, list_height: usiz
     f.render_widget(list, area);
 }
 
-fn render_help_footer(f: &mut Frame, message: &str, help_lines: &[Line<'static>], area: Rect) {
+fn render_help_footer(
+    f: &mut Frame,
+    message: &str,
+    help_lines: &[Line<'static>],
+    area: Rect,
+    token_estimate: usize,
+    selected_count: usize,
+) {
     let help_title = Span::styled(
         "Help",
         Style::default()
             .fg(Color::Magenta)
             .add_modifier(Modifier::BOLD),
     );
+    let status_line: Option<Line<'static>> = if selected_count > 0 {
+        Some(Line::from(vec![Span::styled(
+            format!(
+                " {} file{}  ~{} tokens",
+                selected_count,
+                if selected_count == 1 { "" } else { "s" },
+                crate::token_counter::format_count(token_estimate),
+            ),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )]))
+    } else {
+        None
+    };
     let footer_widget = if message.is_empty() {
-        Paragraph::new(help_lines.to_vec())
+        let mut content: Vec<Line<'static>> = Vec::new();
+        if let Some(status) = status_line {
+            content.push(status);
+        }
+        content.extend_from_slice(help_lines);
+        Paragraph::new(content)
             .block(Block::default().borders(Borders::ALL).title(help_title))
             .wrap(Wrap { trim: true })
     } else {
-        Paragraph::new(vec![Line::from(vec![Span::styled(
+        let mut content: Vec<Line<'static>> = Vec::new();
+        if let Some(status) = status_line {
+            content.push(status);
+        }
+        content.push(Line::from(vec![Span::styled(
             message.to_string(),
             Style::default()
                 .fg(Color::Red)
                 .add_modifier(Modifier::BOLD),
-        )])])
-        .block(Block::default().borders(Borders::ALL).title("Help"))
-        .wrap(Wrap { trim: true })
+        )]));
+        Paragraph::new(content)
+            .block(Block::default().borders(Borders::ALL).title("Help"))
+            .wrap(Wrap { trim: true })
     };
     f.render_widget(footer_widget, area);
 }

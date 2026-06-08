@@ -35,6 +35,9 @@ pub struct AppState {
     pub search_results: Vec<SearchResult>,
     pub original_cursor: usize,
     pub original_scroll_offset: usize,
+    /// Cached estimated token count for the current selection.
+    /// None means the cache is invalid and must be recomputed.
+    token_estimate_cache: Option<usize>,
 }
 
 impl AppState {
@@ -58,6 +61,7 @@ impl AppState {
             search_results: Vec::new(),
             original_cursor: 0,
             original_scroll_offset: 0,
+            token_estimate_cache: None,
         })
     }
 
@@ -111,6 +115,7 @@ impl AppState {
     }
 
     pub fn toggle_selection(&mut self, path: PathBuf, is_dir: bool) {
+        self.token_estimate_cache = None;
         if self.selected.contains(&path) {
             self.selected.remove(&path);
             if is_dir {
@@ -125,6 +130,18 @@ impl AppState {
         } else {
             self.selected.insert(path);
         }
+    }
+
+    /// Returns an estimated token count for the current selection.
+    /// Uses file-size / 4 approximation — fast, no file reads.
+    /// Result is cached until the selection or directory changes.
+    pub fn estimated_tokens(&mut self) -> usize {
+        if let Some(cached) = self.token_estimate_cache {
+            return cached;
+        }
+        let estimate = compute_token_estimate(&self.selected, &self.deselected);
+        self.token_estimate_cache = Some(estimate);
+        estimate
     }
 
     pub fn collect_selected_paths(&self) -> Vec<String> {
@@ -157,6 +174,7 @@ impl AppState {
 // NavigationExt
 impl AppState {
     pub fn navigate_into(&mut self, new_path: PathBuf) {
+        self.token_estimate_cache = None;
         self.save_directory_state();
         self.save_search_state();
         self.current_dir = new_path;
@@ -168,6 +186,7 @@ impl AppState {
     }
 
     pub fn navigate_to_parent(&mut self) {
+        self.token_estimate_cache = None;
         if let Some(parent) = self.current_dir.parent() {
             let parent_path = parent.to_path_buf();
             self.save_directory_state();
@@ -341,4 +360,38 @@ pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<fs::DirEntry>> {
         (!md.as_ref().map(|m| m.is_dir()).unwrap_or(false), e.file_name())
     });
     Ok(entries)
+}
+
+fn compute_token_estimate(
+    selected: &std::collections::HashSet<std::path::PathBuf>,
+    deselected: &std::collections::HashSet<std::path::PathBuf>,
+) -> usize {
+    let mut total: usize = 0;
+    for path in selected {
+        if deselected.iter().any(|d| path.starts_with(d)) {
+            continue;
+        }
+        let Ok(meta) = std::fs::metadata(path) else { continue };
+        if meta.is_dir() {
+            let walker = ignore::WalkBuilder::new(path)
+                .hidden(false)
+                .git_ignore(false)
+                .follow_links(true)
+                .build();
+            for entry in walker.filter_map(|e| e.ok()) {
+                if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                    let entry_path = entry.path();
+                    if deselected.iter().any(|d| entry_path.starts_with(d)) {
+                        continue;
+                    }
+                    if let Ok(entry_meta) = entry.metadata() {
+                        total += crate::token_counter::estimate_from_bytes(entry_meta.len());
+                    }
+                }
+            }
+        } else {
+            total += crate::token_counter::estimate_from_bytes(meta.len());
+        }
+    }
+    total
 }

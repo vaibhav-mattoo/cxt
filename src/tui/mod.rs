@@ -37,9 +37,14 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
 
     loop {
         app.sync_scroll(app.visible_height);
+        let token_estimate: usize = if app.selected.is_empty() {
+            0
+        } else {
+            app.estimated_tokens()
+        };
         let mut rendered_height: u16 = 0;
         terminal.draw(|f| {
-            rendered_height = render::draw(f, &app, &message);
+            rendered_height = render::draw(f, &app, &message, token_estimate);
         })?;
         app.visible_height = rendered_height as usize;
         terminal.backend_mut().flush()?;
