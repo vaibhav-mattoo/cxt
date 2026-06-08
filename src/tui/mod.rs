@@ -11,7 +11,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, io::Write, time::Duration};
 
-use app::AppState;
+use app::{AppMode, AppState};
 
 pub fn run_tui() -> Result<Vec<String>> {
     enable_raw_mode()?;
@@ -36,7 +36,10 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
     let mut message = String::new();
 
     loop {
-        app.sync_scroll(app.visible_height);
+        // Search mode manages its own cursor scrolling; tree widget self-manages.
+        if app.mode != AppMode::Normal {
+            app.sync_search_scroll(app.visible_height);
+        }
         let token_estimate: usize = if app.selected.is_empty() {
             0
         } else {
@@ -44,7 +47,7 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
         };
         let mut rendered_height: u16 = 0;
         terminal.draw(|f| {
-            rendered_height = render::draw(f, &app, &message, token_estimate);
+            rendered_height = render::draw(f, &mut app, &message, token_estimate);
         })?;
         app.visible_height = rendered_height as usize;
         terminal.backend_mut().flush()?;

@@ -1,3 +1,4 @@
+use fuzzy_matcher::FuzzyMatcher;
 use std::{
     collections::{HashMap, HashSet},
     env, fs, io,
@@ -16,92 +17,91 @@ pub struct SearchResult {
     pub path: PathBuf,
     pub display_name: String,
     pub is_dir: bool,
+    pub match_score: i64,
+    pub match_indices: Vec<usize>,
 }
 
 pub struct AppState {
-    pub current_dir: PathBuf,
-    pub entries: Vec<fs::DirEntry>,
-    pub cursor: usize,
-    pub scroll_offset: usize,
-    pub visible_height: usize,
+    pub root_dir: PathBuf,
+    pub tree_state: tui_tree_widget::TreeState<PathBuf>,
+    pub dir_cache: HashMap<PathBuf, Vec<fs::DirEntry>>,
+    pub root_history: Vec<PathBuf>,
     pub selected: HashSet<PathBuf>,
     pub deselected: HashSet<PathBuf>,
     pub relative: bool,
     pub no_path: bool,
-    pub directory_history: HashMap<PathBuf, (usize, usize)>,
     pub search_history: HashMap<PathBuf, (String, Vec<SearchResult>)>,
     pub mode: AppMode,
     pub search_query: String,
     pub search_results: Vec<SearchResult>,
+    pub search_cursor: usize,
+    pub search_scroll_offset: usize,
+    pub visible_height: usize,
     pub original_cursor: usize,
     pub original_scroll_offset: usize,
-    /// Cached estimated token count for the current selection.
-    /// None means the cache is invalid and must be recomputed.
     token_estimate_cache: Option<usize>,
+    matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
 impl AppState {
     pub fn new() -> io::Result<Self> {
-        let current_dir = env::current_dir()?;
-        let entries = read_dir_sorted(&current_dir)?;
-        Ok(Self {
-            current_dir,
-            entries,
-            cursor: 0,
-            scroll_offset: 0,
-            visible_height: 10,
+        let root_dir = env::current_dir()?;
+        let mut dir_cache = HashMap::new();
+        let root_entries = read_dir_sorted(&root_dir)?;
+
+        // Eagerly load one level of subdirs so ▶ indicators appear immediately.
+        let subdirs: Vec<PathBuf> = root_entries
+            .iter()
+            .filter(|e| e.metadata().map(|m| m.is_dir()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        dir_cache.insert(root_dir.clone(), root_entries);
+        for subdir in subdirs {
+            if let Ok(sub_entries) = read_dir_sorted(&subdir) {
+                dir_cache.insert(subdir, sub_entries);
+            }
+        }
+
+        let mut app = Self {
+            root_dir,
+            tree_state: tui_tree_widget::TreeState::default(),
+            dir_cache,
+            root_history: Vec::new(),
             selected: HashSet::new(),
             deselected: HashSet::new(),
             relative: false,
             no_path: false,
-            directory_history: HashMap::new(),
             search_history: HashMap::new(),
             mode: AppMode::Normal,
             search_query: String::new(),
             search_results: Vec::new(),
+            search_cursor: 0,
+            search_scroll_offset: 0,
+            visible_height: 10,
             original_cursor: 0,
             original_scroll_offset: 0,
             token_estimate_cache: None,
-        })
+            matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
+        };
+        app.select_first_entry();
+        Ok(app)
     }
 
-    pub fn reset_cursor(&mut self) {
-        self.cursor = 0;
-        self.scroll_offset = 0;
-    }
-
-    pub fn save_directory_state(&mut self) {
-        self.directory_history
-            .insert(self.current_dir.clone(), (self.cursor, self.scroll_offset));
-    }
-
-    pub fn restore_directory_state(&mut self) {
-        if let Some(&(cursor, scroll_offset)) = self.directory_history.get(&self.current_dir) {
-            self.cursor = cursor;
-            self.scroll_offset = scroll_offset;
-        } else {
-            self.reset_cursor();
+    /// Select the first entry in the current root directory.
+    pub fn select_first_entry(&mut self) {
+        if let Some(entries) = self.dir_cache.get(&self.root_dir) {
+            if let Some(first) = entries.first() {
+                self.tree_state.select(vec![first.path()]);
+            }
         }
     }
 
     pub fn save_search_state(&mut self) {
         if self.mode != AppMode::Normal {
             self.search_history.insert(
-                self.current_dir.clone(),
+                self.root_dir.clone(),
                 (self.search_query.clone(), self.search_results.clone()),
             );
-        }
-    }
-
-    pub fn move_cursor_up(&mut self) {
-        if self.cursor > 0 {
-            self.cursor -= 1;
-        }
-    }
-
-    pub fn move_cursor_down(&mut self) {
-        if self.cursor + 1 < self.entries.len() {
-            self.cursor += 1;
         }
     }
 }
@@ -169,35 +169,67 @@ impl AppState {
         }
         final_paths
     }
+
+    /// Returns the path currently highlighted in the tree cursor.
+    pub fn highlighted_path(&self) -> Option<PathBuf> {
+        self.tree_state.selected().last().cloned()
+    }
 }
 
 // NavigationExt
 impl AppState {
-    pub fn navigate_into(&mut self, new_path: PathBuf) {
-        self.token_estimate_cache = None;
-        self.save_directory_state();
-        self.save_search_state();
-        self.current_dir = new_path;
-        self.entries = read_dir_sorted(&self.current_dir).unwrap_or_default();
-        self.mode = AppMode::Normal;
-        self.search_query.clear();
-        self.search_results.clear();
-        self.reset_cursor();
+    /// Load `dir`'s direct children into the cache if not already present.
+    /// Also eagerly loads one level of subdirectories for ▶ indicators.
+    pub fn ensure_dir_loaded(&mut self, dir: &PathBuf) {
+        if self.dir_cache.contains_key(dir) {
+            return;
+        }
+        let Ok(entries) = read_dir_sorted(dir) else {
+            return;
+        };
+        let subdirs: Vec<PathBuf> = entries
+            .iter()
+            .filter(|e| e.metadata().map(|m| m.is_dir()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        self.dir_cache.insert(dir.clone(), entries);
+        for subdir in subdirs {
+            if !self.dir_cache.contains_key(&subdir) {
+                if let Ok(sub_entries) = read_dir_sorted(&subdir) {
+                    self.dir_cache.insert(subdir, sub_entries);
+                }
+            }
+        }
     }
 
-    pub fn navigate_to_parent(&mut self) {
+    /// Change the tree root to the parent directory of root_dir.
+    pub fn go_up_root(&mut self) {
         self.token_estimate_cache = None;
-        if let Some(parent) = self.current_dir.parent() {
+        if let Some(parent) = self.root_dir.parent() {
+            let old_root = self.root_dir.clone();
             let parent_path = parent.to_path_buf();
-            self.save_directory_state();
-            self.save_search_state();
-            self.current_dir = parent_path;
-            self.entries = read_dir_sorted(&self.current_dir).unwrap_or_default();
+            self.root_history.push(self.root_dir.clone());
+            self.root_dir = parent_path.clone();
+            self.ensure_dir_loaded(&parent_path);
+            self.tree_state = tui_tree_widget::TreeState::default();
+            // Restore cursor to the directory we just backed out of.
+            self.tree_state.select(vec![old_root]);
             self.mode = AppMode::Normal;
             self.search_query.clear();
             self.search_results.clear();
-            self.restore_directory_state();
         }
+    }
+
+    /// Navigate into a directory from search mode (sets root_dir, resets tree).
+    pub fn navigate_to_dir(&mut self, path: PathBuf) {
+        self.token_estimate_cache = None;
+        self.root_dir = path.clone();
+        self.ensure_dir_loaded(&path);
+        self.tree_state = tui_tree_widget::TreeState::default();
+        self.mode = AppMode::Normal;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.select_first_entry();
     }
 }
 
@@ -205,25 +237,22 @@ impl AppState {
 impl AppState {
     pub fn enter_search(&mut self) {
         self.mode = AppMode::SearchFocused;
-        self.original_cursor = self.cursor;
-        self.original_scroll_offset = self.scroll_offset;
+        self.original_cursor = self.search_cursor;
+        self.original_scroll_offset = self.search_scroll_offset;
         self.search_query.clear();
         self.search_results.clear();
         self.update_search();
-        self.cursor = 0;
-        self.scroll_offset = 0;
+        self.search_cursor = 0;
+        self.search_scroll_offset = 0;
     }
 
     pub fn exit_search(&mut self) {
         self.mode = AppMode::Normal;
         self.search_query.clear();
-        if let Ok(entries) = read_dir_sorted(&self.current_dir) {
-            self.entries = entries;
-        }
-        self.cursor = self.original_cursor;
-        self.scroll_offset = self.original_scroll_offset;
         self.search_results.clear();
-        self.search_history.remove(&self.current_dir);
+        self.search_cursor = 0;
+        self.search_scroll_offset = 0;
+        self.search_history.remove(&self.root_dir);
     }
 
     pub fn push_search_char(&mut self, c: char) {
@@ -239,117 +268,112 @@ impl AppState {
     pub fn update_search(&mut self) {
         if self.search_query.is_empty() {
             self.search_results.clear();
-            for entry in &self.entries {
-                let path = entry.path();
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
-                self.search_results.push(SearchResult {
-                    path,
-                    display_name: file_name,
-                    is_dir,
-                });
+            if let Some(entries) = self.dir_cache.get(&self.root_dir) {
+                for entry in entries {
+                    let path = entry.path();
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                    self.search_results.push(SearchResult {
+                        path,
+                        display_name: file_name,
+                        is_dir,
+                        match_score: 0,
+                        match_indices: vec![],
+                    });
+                }
             }
-            self.cursor = 0;
-            self.scroll_offset = 0;
+            self.search_cursor = 0;
+            self.search_scroll_offset = 0;
             return;
         }
 
-        let query = self.search_query.to_lowercase();
         let mut results = Vec::new();
 
-        for entry in ignore::WalkBuilder::new(&self.current_dir)
+        let walker = ignore::WalkBuilder::new(&self.root_dir)
             .hidden(false)
             .git_ignore(false)
             .follow_links(false)
-            .build()
-            .filter_map(|e| e.ok())
-        {
+            .build();
+
+        for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
-            let file_name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_lowercase();
-            if file_name.contains(&query) {
-                let display_name = if path.starts_with(&self.current_dir) {
-                    let rel = path.strip_prefix(&self.current_dir).unwrap_or(path);
-                    if rel == std::path::Path::new(".") {
-                        path.file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string()
-                    } else {
-                        rel.to_string_lossy().to_string()
-                    }
+
+            let display_name = if path.starts_with(&self.root_dir) {
+                let rel = path.strip_prefix(&self.root_dir).unwrap_or(path);
+                if rel == std::path::Path::new(".") {
+                    path.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string()
                 } else {
-                    path.to_string_lossy().to_string()
-                };
+                    rel.to_string_lossy().to_string()
+                }
+            } else {
+                path.to_string_lossy().to_string()
+            };
+
+            if let Some((score, indices)) =
+                self.matcher.fuzzy_indices(&display_name, &self.search_query)
+            {
                 results.push(SearchResult {
                     path: path.to_path_buf(),
                     display_name,
                     is_dir: entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false),
+                    match_score: score,
+                    match_indices: indices,
                 });
             }
         }
 
         results.sort_by(|a, b| {
-            if a.is_dir != b.is_dir {
-                b.is_dir.cmp(&a.is_dir)
-            } else {
-                let len_cmp = a.display_name.len().cmp(&b.display_name.len());
-                if len_cmp == std::cmp::Ordering::Equal {
-                    a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
-                } else {
-                    len_cmp
-                }
-            }
+            b.match_score
+                .cmp(&a.match_score)
+                .then_with(|| b.is_dir.cmp(&a.is_dir))
+                .then_with(|| a.display_name.len().cmp(&b.display_name.len()))
+                .then_with(|| {
+                    a.display_name
+                        .to_lowercase()
+                        .cmp(&b.display_name.to_lowercase())
+                })
         });
 
         self.search_results = results;
-        self.cursor = 0;
-        self.scroll_offset = 0;
+        self.search_cursor = 0;
+        self.search_scroll_offset = 0;
         if self.mode != AppMode::Normal {
             self.save_search_state();
         }
     }
 }
 
-// ScrollExt
+// ScrollExt (search mode only — tree widget self-manages scrolling)
 impl AppState {
-    pub fn sync_scroll(&mut self, visible_height: usize) {
+    pub fn sync_search_scroll(&mut self, visible_height: usize) {
         self.visible_height = visible_height;
-
-        let entries_len = if self.mode != AppMode::Normal {
-            self.search_results.len()
-        } else {
-            self.entries.len()
-        };
-
-        if self.cursor >= entries_len {
-            self.cursor = entries_len.saturating_sub(1);
+        let len = self.search_results.len();
+        if self.search_cursor >= len {
+            self.search_cursor = len.saturating_sub(1);
         }
-
-        if entries_len <= visible_height {
-            self.scroll_offset = 0;
+        if len <= visible_height {
+            self.search_scroll_offset = 0;
             return;
         }
-
         let top_margin = 2;
         let bottom_margin = 2;
-        let visible_start = self.scroll_offset;
-        let visible_end = self.scroll_offset + visible_height;
-
-        if self.cursor < visible_start + top_margin && self.scroll_offset > 0 {
-            self.scroll_offset = self.cursor.saturating_sub(top_margin);
-        } else if self.cursor + bottom_margin >= visible_end
-            && self.scroll_offset + visible_height < entries_len
+        if self.search_cursor < self.search_scroll_offset + top_margin
+            && self.search_scroll_offset > 0
         {
-            self.scroll_offset =
-                (self.cursor + bottom_margin + 1).saturating_sub(visible_height);
+            self.search_scroll_offset = self.search_cursor.saturating_sub(top_margin);
+        } else if self.search_cursor + bottom_margin
+            >= self.search_scroll_offset + visible_height
+            && self.search_scroll_offset + visible_height < len
+        {
+            self.search_scroll_offset =
+                (self.search_cursor + bottom_margin + 1).saturating_sub(visible_height);
         }
-
-        let max_scroll = entries_len.saturating_sub(visible_height);
-        self.scroll_offset = self.scroll_offset.min(max_scroll);
+        self.search_scroll_offset = self
+            .search_scroll_offset
+            .min(len.saturating_sub(visible_height));
     }
 }
 
@@ -371,7 +395,9 @@ fn compute_token_estimate(
         if deselected.iter().any(|d| path.starts_with(d)) {
             continue;
         }
-        let Ok(meta) = std::fs::metadata(path) else { continue };
+        let Ok(meta) = std::fs::metadata(path) else {
+            continue;
+        };
         if meta.is_dir() {
             let walker = ignore::WalkBuilder::new(path)
                 .hidden(false)

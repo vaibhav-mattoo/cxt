@@ -60,10 +60,10 @@ fn handle_search_navigating(
             app.exit_search();
         }
         KeyCode::Enter => {
-            if let Some(result) = app.search_results.get(app.cursor) {
+            if let Some(result) = app.search_results.get(app.search_cursor) {
                 if result.is_dir {
-                    let new_path = result.path.clone();
-                    app.navigate_into(new_path);
+                    let path = result.path.clone();
+                    app.navigate_to_dir(path);
                 } else {
                     let path = result.path.clone();
                     let is_dir = result.is_dir;
@@ -71,31 +71,31 @@ fn handle_search_navigating(
                 }
             }
         }
-        KeyCode::Up | KeyCode::Char('k') if app.cursor > 0 => {
-            app.cursor -= 1;
+        KeyCode::Up | KeyCode::Char('k') if app.search_cursor > 0 => {
+            app.search_cursor -= 1;
         }
         KeyCode::Down | KeyCode::Char('j')
-            if app.cursor + 1 < app.search_results.len() =>
+            if app.search_cursor + 1 < app.search_results.len() =>
         {
-            app.cursor += 1;
+            app.search_cursor += 1;
         }
         KeyCode::Char(' ') => {
-            if let Some(result) = app.search_results.get(app.cursor) {
+            if let Some(result) = app.search_results.get(app.search_cursor) {
                 let path = result.path.clone();
                 let is_dir = result.is_dir;
                 app.toggle_selection(path, is_dir);
             }
         }
         KeyCode::Char('l') | KeyCode::Right => {
-            if let Some(result) = app.search_results.get(app.cursor) {
+            if let Some(result) = app.search_results.get(app.search_cursor) {
                 if result.is_dir {
-                    let new_path = result.path.clone();
-                    app.navigate_into(new_path);
+                    let path = result.path.clone();
+                    app.navigate_to_dir(path);
                 }
             }
         }
-        KeyCode::Char('h') | KeyCode::Left => {
-            app.navigate_to_parent();
+        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
+            app.go_up_root();
         }
         _ => {}
     }
@@ -122,25 +122,39 @@ fn handle_normal(
         KeyCode::Char('/') => {
             app.enter_search();
         }
-        KeyCode::Up | KeyCode::Char('k') => app.move_cursor_up(),
-        KeyCode::Down | KeyCode::Char('j') => app.move_cursor_down(),
-        KeyCode::Char(' ') => {
-            if let Some(entry) = app.entries.get(app.cursor) {
-                let path = entry.path();
-                let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
-                app.toggle_selection(path, is_dir);
-            }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.tree_state.key_up();
         }
-        KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-            if let Some(entry) = app.entries.get(app.cursor) {
-                if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
-                    let new_path = entry.path();
-                    app.navigate_into(new_path);
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.tree_state.key_down();
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            if let Some(path) = app.highlighted_path() {
+                if path.is_dir() {
+                    app.ensure_dir_loaded(&path);
                 }
             }
+            app.tree_state.key_right();
         }
-        KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Left => {
-            app.navigate_to_parent();
+        KeyCode::Enter => {
+            if let Some(path) = app.highlighted_path() {
+                if path.is_dir() {
+                    app.ensure_dir_loaded(&path);
+                }
+            }
+            app.tree_state.toggle_selected();
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.tree_state.key_left();
+        }
+        KeyCode::Backspace => {
+            app.go_up_root();
+        }
+        KeyCode::Char(' ') => {
+            if let Some(path) = app.highlighted_path() {
+                let is_dir = path.is_dir();
+                app.toggle_selection(path, is_dir);
+            }
         }
         KeyCode::Char('r') if !app.no_path => {
             app.relative = !app.relative;

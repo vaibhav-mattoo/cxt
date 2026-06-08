@@ -1,19 +1,26 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
-use std::{env, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fs,
+    path::PathBuf,
+};
+use tui_tree_widget::{Tree, TreeItem};
 
 use crate::tui::app::{AppMode, AppState};
 
 const HELP_ITEMS: &[(&str, &str)] = &[
     ("↑/k", "Move up"),
     ("↓/j", "Move down"),
-    ("←/h/Backspace", "Up dir"),
-    ("→/l/Enter", "Open dir"),
+    ("←/h", "Collapse dir"),
+    ("→/l", "Expand dir"),
+    ("Enter", "Toggle expand"),
+    ("Backspace", "Parent dir"),
     ("Space", "Select/Unselect"),
     ("/", "Search files"),
     ("c", "Confirm"),
@@ -21,7 +28,7 @@ const HELP_ITEMS: &[(&str, &str)] = &[
 ];
 
 /// Render the full TUI frame and return the inner file-list height in rows.
-pub fn draw(f: &mut Frame, app: &AppState, message: &str, token_estimate: usize) -> u16 {
+pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, token_estimate: usize) -> u16 {
     let help_lines = build_help_lines(f.area().width, app);
     let status_line_height: u16 = if !app.selected.is_empty() { 1 } else { 0 };
     let help_height = help_lines.len().max(1) as u16 + 2 + status_line_height;
@@ -67,14 +74,14 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
             "[No Path Headers]".to_string()
         } else if app.relative {
             match app
-                .current_dir
+                .root_dir
                 .strip_prefix(env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
             {
                 Ok(rel) => rel.display().to_string(),
-                Err(_) => app.current_dir.display().to_string(),
+                Err(_) => app.root_dir.display().to_string(),
             }
         } else {
-            app.current_dir.display().to_string()
+            app.root_dir.display().to_string()
         };
         let mut title_str = "Current Directory".to_string();
         if app.no_path {
@@ -102,21 +109,35 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
     f.render_widget(path_widget, area);
 }
 
-fn render_file_list(f: &mut Frame, app: &AppState, area: Rect, list_height: usize) {
-    let (visible_items, files_title) = if app.mode != AppMode::Normal {
+fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
+    if app.mode != AppMode::Normal {
+        let match_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
         let items: Vec<ListItem> = app
             .search_results
             .iter()
             .enumerate()
-            .skip(app.scroll_offset)
+            .skip(app.search_scroll_offset)
             .take(list_height)
             .map(|(i, result)| {
-                let mut text = result.display_name.clone();
-                if result.is_dir && !text.ends_with('/') {
-                    text.push('/');
+                let mut display_text = result.display_name.clone();
+                if result.is_dir && !display_text.ends_with('/') {
+                    display_text.push('/');
                 }
-                let style = item_style(app, &result.path, result.is_dir, i == app.cursor);
-                ListItem::new(text).style(style)
+                let is_cursor = i == app.search_cursor;
+                let base_style = item_style(app, &result.path, result.is_dir, false);
+                let line = highlight_matches(
+                    &display_text,
+                    &result.match_indices,
+                    base_style,
+                    match_style,
+                );
+                ListItem::new(line).style(if is_cursor {
+                    item_style(app, &result.path, result.is_dir, true)
+                } else {
+                    Style::default()
+                })
             })
             .collect();
         let title = Span::styled(
@@ -125,38 +146,42 @@ fn render_file_list(f: &mut Frame, app: &AppState, area: Rect, list_height: usiz
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         );
-        (items, title)
-    } else {
-        let items: Vec<ListItem> = app
-            .entries
-            .iter()
-            .enumerate()
-            .skip(app.scroll_offset)
-            .take(list_height)
-            .map(|(i, entry)| {
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                let is_dir = entry.metadata().ok().map(|m| m.is_dir()).unwrap_or(false);
-                let path = entry.path();
-                let mut text = file_name;
-                if is_dir {
-                    text.push('/');
-                }
-                let style = item_style(app, &path, is_dir, i == app.cursor);
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        let title = Span::styled(
-            "Files (Space: select, Enter/l/→: open, Backspace/h/←: up)",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-        (items, title)
-    };
+        let list =
+            List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+        f.render_widget(list, area);
+        return;
+    }
 
-    let list =
-        List::new(visible_items).block(Block::default().borders(Borders::ALL).title(files_title));
-    f.render_widget(list, area);
+    // Normal mode: collapsible tree view
+    let open = app.tree_state.opened().clone();
+    let items = build_styled_tree_items(
+        &app.root_dir,
+        &app.dir_cache,
+        &open,
+        &app.selected,
+        &app.deselected,
+    );
+
+    let title = Span::styled(
+        "Files (Space: select, ←/h: collapse, →/l: expand, Enter: toggle, Backspace: parent)",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    let Ok(tree_widget) = Tree::new(&items) else {
+        f.render_widget(Block::default().borders(Borders::ALL).title(title), area);
+        return;
+    };
+    let tree_widget = tree_widget
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::REVERSED),
+        )
+        .highlight_symbol("");
+    f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
 fn render_help_footer(
@@ -312,4 +337,117 @@ fn build_help_lines(width: u16, app: &AppState) -> Vec<Line<'static>> {
     }
 
     help_lines
+}
+
+/// Build a `Line` from `text` where characters at `indices` use `match_style`
+/// and all others use `base_style`.
+fn highlight_matches(
+    text: &str,
+    indices: &[usize],
+    base_style: Style,
+    match_style: Style,
+) -> Line<'static> {
+    if indices.is_empty() {
+        return Line::from(Span::styled(text.to_string(), base_style));
+    }
+
+    let matched: std::collections::HashSet<usize> = indices.iter().copied().collect();
+    let chars: Vec<char> = text.chars().collect();
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut seg_start = 0;
+    let mut seg_is_match = matched.contains(&0);
+
+    for i in 1..=chars.len() {
+        let cur_is_match = i < chars.len() && matched.contains(&i);
+        if i == chars.len() || cur_is_match != seg_is_match {
+            let segment: String = chars[seg_start..i].iter().collect();
+            spans.push(Span::styled(
+                segment,
+                if seg_is_match { match_style } else { base_style },
+            ));
+            seg_start = i;
+            seg_is_match = cur_is_match;
+        }
+    }
+
+    Line::from(spans)
+}
+
+/// Build styled TreeItems for a directory from the cache.
+/// Only recurses into directories that are in `open`.
+/// Closed directories with cached entries include flat stubs so the ▶ symbol shows.
+fn build_styled_tree_items(
+    dir: &PathBuf,
+    dir_cache: &HashMap<PathBuf, Vec<fs::DirEntry>>,
+    open: &HashSet<Vec<PathBuf>>,
+    selected: &HashSet<PathBuf>,
+    deselected: &HashSet<PathBuf>,
+) -> Vec<TreeItem<'static, PathBuf>> {
+    let entries = match dir_cache.get(dir) {
+        Some(e) => e,
+        None => return vec![],
+    };
+
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+            let raw_name = entry.file_name().to_string_lossy().to_string();
+            let display_name = if is_dir {
+                format!("{}/", raw_name)
+            } else {
+                raw_name
+            };
+
+            let is_directly_selected =
+                selected.contains(&path) && !deselected.contains(&path);
+            let is_implicit = selected.iter().any(|sel| {
+                sel.is_dir()
+                    && path.starts_with(sel)
+                    && path != *sel
+                    && !deselected.contains(&path)
+            });
+            let is_selected = is_directly_selected || is_implicit;
+
+            let base_style = if is_dir {
+                Style::default().fg(Color::Blue)
+            } else {
+                Style::default()
+            };
+            let style = if is_selected {
+                base_style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            } else {
+                base_style
+            };
+
+            let text = Text::styled(display_name, style);
+
+            if is_dir {
+                let is_open = open.iter().any(|kp| kp.last() == Some(&path));
+                let children = if is_open {
+                    build_styled_tree_items(&path, dir_cache, open, selected, deselected)
+                } else {
+                    match dir_cache.get(&path) {
+                        Some(sub_entries) if !sub_entries.is_empty() => sub_entries
+                            .iter()
+                            .filter_map(|e| {
+                                Some(TreeItem::new_leaf(
+                                    e.path(),
+                                    e.file_name().to_string_lossy().to_string(),
+                                ))
+                            })
+                            .collect(),
+                        // Not yet cached — dummy child so the ▶ indicator always shows.
+                        None => vec![TreeItem::new_leaf(path.join("\0"), String::new())],
+                        _ => vec![], // confirmed empty directory
+                    }
+                };
+                TreeItem::new(path, text, children).ok()
+            } else {
+                Some(TreeItem::new_leaf(path, text))
+            }
+        })
+        .collect()
 }
