@@ -462,7 +462,6 @@ dependencies = [
  "predicates",
  "ratatui",
  "tempfile",
- "walkdir",
  "wild",
 ]
 
