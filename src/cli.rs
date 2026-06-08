@@ -8,7 +8,7 @@ use clap::Parser;
     long_about = "cxt is a command-line tool that aggregates the contents of specified files and directories into a single string, then directs it to the clipboard, a file, or standard output."
 )]
 pub struct Args {
-    #[arg(help = "File and/or directory paths to aggregate")]
+    #[arg(help = "File and/or directory paths to aggregate, or a single image file to copy")]
     pub paths: Vec<String>,
 
     #[arg(short, long, help = "Print content to stdout")]

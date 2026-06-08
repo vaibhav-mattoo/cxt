@@ -5,6 +5,7 @@ use std::io::{self, Write};
 mod cli;
 mod clipboard;
 mod content_aggregator;
+mod image_handler;
 mod output_handler;
 mod path_formatter;
 mod tui;
@@ -57,6 +58,24 @@ fn main() -> Result<()> {
     } else {
         args.paths.clone()
     };
+
+    // Detect image mode. Errors on mixed input or multiple images.
+    if image_handler::check_image_mode(&paths)? {
+        // Validate flag compatibility
+        if args.ci {
+            anyhow::bail!("Image mode requires clipboard access and is incompatible with --ci.");
+        }
+        if args.print {
+            anyhow::bail!("--print is incompatible with image mode.");
+        }
+        if args.write.is_some() {
+            anyhow::bail!("--write is incompatible with image mode.");
+        }
+        // paths is guaranteed to have exactly one entry here by check_image_mode
+        let path = std::path::Path::new(&paths[0]);
+        image_handler::copy_image_to_clipboard(path)?;
+        return Ok(());
+    }
 
     let mut aggregator = ContentAggregator::new(
         args.relative,

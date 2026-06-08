@@ -23,6 +23,9 @@ ratatui = "0.30"
 crossterm = "0.29"
 wild = "2"
 ignore = "0.4"
+image = { version = "0.25", default-features = false, features = [
+    "jpeg", "png", "gif", "bmp", "webp", "tiff", "ico"
+] }
 dhat = { version = "0.3", optional = true }
 
 [features]
