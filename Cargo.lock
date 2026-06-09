@@ -490,6 +490,7 @@ dependencies = [
  "crossterm",
  "dhat",
  "dialoguer",
+ "flate2",
  "fuzzy-matcher",
  "globset",
  "ignore",

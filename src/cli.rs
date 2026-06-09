@@ -64,6 +64,13 @@ pub struct Args {
 
     #[arg(
         long,
+        help = "Gzip-compress the output file (only valid with --write)",
+        requires = "write"
+    )]
+    pub compress: bool,
+
+    #[arg(
+        long,
         value_enum,
         default_value = "xml",
         help = "Output format: xml (default) wraps files in <file path=\"...\"> tags \
@@ -77,6 +84,9 @@ impl Args {
     pub fn validate(&self) -> Result<(), String> {
         if self.relative && self.no_path {
             return Err("Cannot use --relative and --no-path together".to_string());
+        }
+        if self.compress && self.write.is_none() {
+            return Err("--compress requires --write to specify an output file".to_string());
         }
         // multiple files in ignore path provided as arguments like "cxt target_dir src/* -i dir -i file" should be ignored
         for ignore_path in &self.ignore {

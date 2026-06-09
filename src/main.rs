@@ -60,6 +60,16 @@ fn dedup_paths(paths: Vec<String>) -> Vec<String> {
     paths.into_iter().filter(|p| seen.insert(p.clone())).collect()
 }
 
+fn eprintln_binary_skip_summary(aggregator: &ContentAggregator) {
+    let n = aggregator.skipped_binary_count();
+    if n > 0 {
+        eprintln!(
+            "({n} binary file{} skipped — add -i patterns to suppress this warning)",
+            if n == 1 { "" } else { "s" }
+        );
+    }
+}
+
 fn main() -> Result<()> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
@@ -163,14 +173,37 @@ fn main() -> Result<()> {
 
     // Scenario 1: stream directly to a file — O(1) memory
     if let Some(file_path) = &args.write {
-        let mut file = std::fs::File::create(file_path)?;
-        aggregator.aggregate_paths(&paths, &mut file)?;
-        println!(
-            "Wrote {} tokens from {} files to {}.",
-            token_counter::format_count(aggregator.token_count()),
-            aggregator.file_count(),
-            file_path
-        );
+        if args.compress {
+            let out_path = if file_path.ends_with(".gz") {
+                file_path.clone()
+            } else {
+                format!("{file_path}.gz")
+            };
+            let file = std::fs::File::create(&out_path)?;
+            let mut encoder = flate2::write::GzEncoder::new(
+                file,
+                flate2::Compression::default(),
+            );
+            aggregator.aggregate_paths(&paths, &mut encoder)?;
+            encoder.finish()?;
+            eprintln_binary_skip_summary(&aggregator);
+            println!(
+                "Wrote {} tokens from {} files to {} (gzip-compressed).",
+                token_counter::format_count(aggregator.token_count()),
+                aggregator.file_count(),
+                out_path,
+            );
+            return Ok(());
+        } else {
+            let mut file = std::fs::File::create(file_path)?;
+            aggregator.aggregate_paths(&paths, &mut file)?;
+            println!(
+                "Wrote {} tokens from {} files to {}.",
+                token_counter::format_count(aggregator.token_count()),
+                aggregator.file_count(),
+                file_path
+            );
+        }
     }
     // Scenario 2: stream directly to stdout, no clipboard — O(1) memory
     else if args.print && args.ci {
@@ -211,12 +244,6 @@ fn main() -> Result<()> {
         aggregator.aggregate_paths(&paths, &mut io::sink())?;
     }
 
-    let n = aggregator.skipped_binary_count();
-    if n > 0 {
-        eprintln!(
-            "({n} binary file{} skipped — add -i patterns to suppress this warning)",
-            if n == 1 { "" } else { "s" }
-        );
-    }
+    eprintln_binary_skip_summary(&aggregator);
     Ok(())
 }
