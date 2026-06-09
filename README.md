@@ -169,15 +169,13 @@ Launch with `cxt` or `cxt --tui` to browse and select files interactively.
 | `→` / `l` / `Enter` | Expand directory |
 | `←` / `h` / `Backspace` | Collapse / go to parent directory |
 | `Space` | Select / unselect file or directory |
-| `/` | Enter fuzzy search |
+| `/ or ctrl-f` | Enter fuzzy search |
 | `?` | Toggle keybinding help overlay |
 | `r` | Toggle relative path headers |
 | `n` | Toggle no path headers |
 | `c` | Confirm selection → copy to clipboard |
 | `q` / `Ctrl-c` | Quit |
 
-**Selection behaviour:** selecting a directory selects all files within it
-**Search mode (`/ or ctrl-f`):** fuzzy-find files across the current directory tree
 ---
 
 ## All Options
