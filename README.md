@@ -8,7 +8,11 @@
 
 Aggregate files and directories quickly into a single clipboard-ready context block, tuned for feeding code to AI assistants.
 
-<https://github.com/user-attachments/assets/18fa3c3c-0d87-442e-bb30-cbfe36e0e116>
+
+
+https://github.com/user-attachments/assets/a8953c2f-f888-46a2-a514-4317ab511b04
+
+
 
 ---
 
