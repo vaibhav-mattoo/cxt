@@ -56,6 +56,9 @@ fn handle_search_navigating(
         KeyCode::Char('/') => {
             app.mode = AppMode::SearchFocused;
         }
+        KeyCode::Char('f') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.mode = AppMode::SearchFocused;
+        }
         KeyCode::Esc => {
             app.exit_search();
         }
@@ -129,6 +132,9 @@ fn handle_normal(
             }
         }
         KeyCode::Char('/') => {
+            app.enter_search();
+        }
+        KeyCode::Char('f') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
             app.enter_search();
         }
         KeyCode::Up | KeyCode::Char('k') => {

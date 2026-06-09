@@ -3,8 +3,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph,
-        Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+        Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
     },
     Frame,
 };
@@ -15,8 +15,8 @@ use std::{
 };
 use tui_tree_widget::{Tree, TreeItem};
 
-use crate::tui::app::{AppMode, AppState};
 use super::theme;
+use crate::tui::app::{AppMode, AppState};
 
 fn panel(title: &str, focused: bool) -> Block<'static> {
     Block::default()
@@ -165,8 +165,8 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
         let list = List::new(items).block(panel("Files", app.mode != AppMode::Normal));
         f.render_widget(list, area);
 
-        let mut sb_state = ScrollbarState::new(app.search_results.len())
-            .position(app.search_cursor);
+        let mut sb_state =
+            ScrollbarState::new(app.search_results.len()).position(app.search_cursor);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -307,7 +307,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Enter", "Toggle expand"),
         ("Backspace", "Parent dir"),
         ("Space", "Select/Unselect"),
-        ("/", "Search files"),
+        ("/ or Ctrl-f", "Search files"),
         ("?", "Toggle help"),
         ("c", "Confirm"),
         ("q/Ctrl-c", "Quit"),
@@ -382,7 +382,11 @@ fn highlight_matches(
             let segment: String = chars[seg_start..i].iter().collect();
             spans.push(Span::styled(
                 segment,
-                if seg_is_match { match_style } else { base_style },
+                if seg_is_match {
+                    match_style
+                } else {
+                    base_style
+                },
             ));
             seg_start = i;
             seg_is_match = cur_is_match;
@@ -444,13 +448,7 @@ fn build_styled_tree_items(
             if is_dir {
                 let is_open = open.iter().any(|kp| kp.last() == Some(&path));
                 let children = if is_open {
-                    build_styled_tree_items(
-                        &path,
-                        dir_cache,
-                        open,
-                        selected,
-                        fully_selected_dirs,
-                    )
+                    build_styled_tree_items(&path, dir_cache, open, selected, fully_selected_dirs)
                 } else {
                     match dir_cache.get(&path) {
                         Some(sub_entries) if !sub_entries.is_empty() => sub_entries
