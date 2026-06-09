@@ -1,4 +1,4 @@
-# cxt — Context Extractor
+# cxt: Context Extractor
 
 [![Crates.io](https://img.shields.io/crates/v/cxt)](https://crates.io/crates/cxt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
