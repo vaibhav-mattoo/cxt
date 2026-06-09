@@ -479,6 +479,7 @@ dependencies = [
  "dhat",
  "dialoguer",
  "fuzzy-matcher",
+ "globset",
  "ignore",
  "image",
  "pathdiff",

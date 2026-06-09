@@ -1,11 +1,32 @@
 use anyhow::Result;
+use globset::{GlobSet, GlobSetBuilder};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 /// Files larger than this use byte estimation instead of exact BPE counting.
 const MAX_EXACT_BYTES: u64 = 5 * 1024 * 1024; // 5 MB
+
+pub fn is_glob_pattern(s: &str) -> bool {
+    s.contains(['*', '?', '{', '['])
+}
+
+fn is_binary_content(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(8192)].contains(&0u8)
+}
+
+fn path_matches_glob(glob_set: &GlobSet, path: &Path) -> bool {
+    if glob_set.is_empty() {
+        return false;
+    }
+    if glob_set.is_match(path) {
+        return true;
+    }
+    path.file_name()
+        .map(|n| glob_set.is_match(n))
+        .unwrap_or(false)
+}
 
 pub struct ContentAggregator {
     formatter: Box<dyn crate::formatter::Formatter>,
@@ -14,9 +35,11 @@ pub struct ContentAggregator {
     token_count: usize,
     token_counter: crate::token_counter::TokenCounter,
     ignore: Vec<PathBuf>,
+    ignore_globs: GlobSet,
     sort: bool,
     /// Extensions to include. Empty means all files are allowed.
     allowed_extensions: std::collections::HashSet<String>,
+    skipped_binary: usize,
 }
 
 impl ContentAggregator {
@@ -27,22 +50,47 @@ impl ContentAggregator {
         sort: bool,
         allowed_extensions: std::collections::HashSet<String>,
     ) -> Self {
+        let mut exact_paths = Vec::new();
+        let mut glob_builder = GlobSetBuilder::new();
+        for s in ignore {
+            if is_glob_pattern(&s) {
+                match globset::Glob::new(&s) {
+                    Ok(g) => {
+                        glob_builder.add(g);
+                    }
+                    Err(e) => eprintln!("Warning: invalid glob pattern '{s}': {e}"),
+                }
+            } else {
+                exact_paths.push(PathBuf::from(s));
+            }
+        }
+        let ignore_globs = glob_builder.build().unwrap_or_else(|e| {
+            eprintln!("Warning: failed to build glob set: {e}");
+            GlobSetBuilder::new().build().unwrap()
+        });
         Self {
             formatter,
             include_hidden_in_dirs,
             file_count: 0,
             token_count: 0,
             token_counter: crate::token_counter::TokenCounter::new(),
-            ignore: ignore.into_iter().map(PathBuf::from).collect(),
+            ignore: exact_paths,
+            ignore_globs,
             sort,
             allowed_extensions,
+            skipped_binary: 0,
         }
+    }
+
+    fn matches_ignore_glob(&self, path: &Path) -> bool {
+        path_matches_glob(&self.ignore_globs, path)
     }
 
     fn is_ignored(&self, path: &Path) -> bool {
         self.ignore
             .iter()
             .any(|p| path == p || path.starts_with(p))
+            || self.matches_ignore_glob(path)
     }
 
     /// Returns true if `path` passes the extension filter.
@@ -93,7 +141,6 @@ impl ContentAggregator {
             return Ok(());
         }
         let display_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        self.formatter.write_file_header(&display_path, writer)?;
         let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
         if file_size <= MAX_EXACT_BYTES {
             let content = match fs::read(path) {
@@ -103,13 +150,18 @@ impl ContentAggregator {
                     return Ok(());
                 }
             };
+            if is_binary_content(&content) {
+                eprintln!("Warning: skipping binary file '{}'", path.display());
+                self.skipped_binary += 1;
+                return Ok(());
+            }
+            self.formatter.write_file_header(&display_path, writer)?;
             let text = String::from_utf8_lossy(&content);
             self.token_count += self.token_counter.count(&text);
             if let Err(e) = writer.write_all(&content) {
                 eprintln!("Warning: Failed to write file '{}': {e}", path.display());
             }
         } else {
-            self.token_count += crate::token_counter::estimate_from_bytes(file_size);
             let mut file = match fs::File::open(path) {
                 Ok(f) => f,
                 Err(e) => {
@@ -117,6 +169,16 @@ impl ContentAggregator {
                     return Ok(());
                 }
             };
+            let mut header = [0u8; 8192];
+            let n = file.read(&mut header).unwrap_or(0);
+            if is_binary_content(&header[..n]) {
+                eprintln!("Warning: skipping binary file '{}'", path.display());
+                self.skipped_binary += 1;
+                return Ok(());
+            }
+            file.seek(SeekFrom::Start(0))?;
+            self.formatter.write_file_header(&display_path, writer)?;
+            self.token_count += crate::token_counter::estimate_from_bytes(file_size);
             if let Err(e) = std::io::copy(&mut file, writer) {
                 eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
             }
@@ -129,7 +191,6 @@ impl ContentAggregator {
     /// Like `aggregate_file` but skips `canonicalize()` — path is already canonical.
     /// Called from `aggregate_directory` which pre-canonicalises the base directory once.
     fn aggregate_file_precanon<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
-        self.formatter.write_file_header(path, writer)?;
         let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
         if file_size <= MAX_EXACT_BYTES {
             let content = match fs::read(path) {
@@ -139,13 +200,18 @@ impl ContentAggregator {
                     return Ok(());
                 }
             };
+            if is_binary_content(&content) {
+                eprintln!("Warning: skipping binary file '{}'", path.display());
+                self.skipped_binary += 1;
+                return Ok(());
+            }
+            self.formatter.write_file_header(path, writer)?;
             let text = String::from_utf8_lossy(&content);
             self.token_count += self.token_counter.count(&text);
             if let Err(e) = writer.write_all(&content) {
                 eprintln!("Warning: Failed to write file '{}': {e}", path.display());
             }
         } else {
-            self.token_count += crate::token_counter::estimate_from_bytes(file_size);
             let mut file = match fs::File::open(path) {
                 Ok(f) => f,
                 Err(e) => {
@@ -153,6 +219,16 @@ impl ContentAggregator {
                     return Ok(());
                 }
             };
+            let mut header = [0u8; 8192];
+            let n = file.read(&mut header).unwrap_or(0);
+            if is_binary_content(&header[..n]) {
+                eprintln!("Warning: skipping binary file '{}'", path.display());
+                self.skipped_binary += 1;
+                return Ok(());
+            }
+            file.seek(SeekFrom::Start(0))?;
+            self.formatter.write_file_header(path, writer)?;
+            self.token_count += crate::token_counter::estimate_from_bytes(file_size);
             if let Err(e) = std::io::copy(&mut file, writer) {
                 eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
             }
@@ -174,6 +250,7 @@ impl ContentAggregator {
             .unwrap_or_else(|_| dir_path.to_path_buf());
 
         let ignore_list = self.ignore.clone();
+        let ignore_globs = self.ignore_globs.clone();
         let allowed_ext = self.allowed_extensions.clone();
         let (tx, rx) = mpsc::channel::<PathBuf>();
 
@@ -186,14 +263,29 @@ impl ContentAggregator {
         walker.run(|| {
             let tx = tx.clone();
             let ignore_list = ignore_list.clone();
+            let ignore_globs = ignore_globs.clone();
             let allowed_ext = allowed_ext.clone();
             Box::new(move |result| {
                 use ignore::WalkState;
                 if let Ok(entry) = result {
                     let path = entry.path();
-                    let ignored = ignore_list
+                    let exact_ignored = ignore_list
                         .iter()
                         .any(|ig| path == ig || path.starts_with(ig));
+                    let path_ignored = exact_ignored || path_matches_glob(&ignore_globs, path);
+
+                    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                    if is_dir {
+                        return if path_ignored {
+                            WalkState::Skip
+                        } else {
+                            WalkState::Continue
+                        };
+                    }
+                    if path_ignored {
+                        return WalkState::Continue;
+                    }
+
                     let allowed = if allowed_ext.is_empty() {
                         true
                     } else {
@@ -202,7 +294,7 @@ impl ContentAggregator {
                             .map(|ext| allowed_ext.contains(&ext.to_lowercase()))
                             .unwrap_or(false)
                     };
-                    if !ignored && entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) && allowed {
+                    if allowed {
                         let _ = tx.send(path.to_path_buf());
                     }
                 }
@@ -238,6 +330,10 @@ impl ContentAggregator {
 
     pub fn token_count(&self) -> usize {
         self.token_count
+    }
+
+    pub fn skipped_binary_count(&self) -> usize {
+        self.skipped_binary
     }
 }
 

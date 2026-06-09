@@ -23,6 +23,7 @@ ratatui = "0.30"
 crossterm = "0.29"
 wild = "2"
 ignore = "0.4"
+globset = "0.4.18"
 image = { version = "0.25", default-features = false, features = [
   "jpeg",
   "png",

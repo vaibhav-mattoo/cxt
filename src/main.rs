@@ -164,5 +164,13 @@ fn main() -> Result<()> {
     else {
         aggregator.aggregate_paths(&paths, &mut io::sink())?;
     }
+
+    let n = aggregator.skipped_binary_count();
+    if n > 0 {
+        eprintln!(
+            "({n} binary file{} skipped — add -i patterns to suppress this warning)",
+            if n == 1 { "" } else { "s" }
+        );
+    }
     Ok(())
 }
