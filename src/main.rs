@@ -39,6 +39,27 @@ impl<A: Write, B: Write> Write for TeeWriter<'_, A, B> {
     }
 }
 
+/// Read newline-delimited paths from stdin, stripping CR and skipping blank lines.
+/// Does NOT trim spaces — spaces are valid in file names.
+fn read_stdin_paths() -> anyhow::Result<Vec<String>> {
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    let paths = stdin
+        .lock()
+        .lines()
+        .map_while(Result::ok)
+        .map(|l| l.trim_end_matches('\r').to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok(paths)
+}
+
+/// Deduplicate while preserving first-seen order.
+fn dedup_paths(paths: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    paths.into_iter().filter(|p| seen.insert(p.clone())).collect()
+}
+
 fn main() -> Result<()> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
@@ -69,7 +90,32 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let paths: Vec<String> = if args.tui || args.paths.is_empty() {
+    let stdin_is_piped = !atty::is(atty::Stream::Stdin);
+
+    let paths: Vec<String> = if args.tui {
+        // --tui explicitly requested: always launch interactive picker, ignore stdin.
+        let selected = tui::run_tui()?;
+        if selected.is_empty() {
+            println!("No files or directories selected. Exiting.");
+            return Ok(());
+        }
+        selected
+    } else if stdin_is_piped {
+        // Stdin is a pipe: read newline-delimited paths from it.
+        let stdin_paths = read_stdin_paths()?;
+        // Combine CLI args (higher precedence / listed first) with stdin paths.
+        let combined = dedup_paths(
+            args.paths.iter().cloned().chain(stdin_paths).collect(),
+        );
+        if combined.is_empty() {
+            anyhow::bail!(
+                "No paths provided. Pipe a newline-delimited list of paths or pass them as arguments.\n\
+                 Examples:\n  fd -e rs | cxt\n  cat file_list.txt | cxt\n  cxt src/ Cargo.toml"
+            );
+        }
+        combined
+    } else if args.paths.is_empty() {
+        // No stdin pipe, no CLI args: fall back to interactive TUI.
         let selected = tui::run_tui()?;
         if selected.is_empty() {
             println!("No files or directories selected. Exiting.");
