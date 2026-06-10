@@ -82,7 +82,7 @@ cat file_list.txt | cxt
 cxt
 cxt --tui
 
-# Single image — copies the image itself to clipboard (not its path)
+# Single image copies the image itself to clipboard (not its path)
 cxt screenshot.png
 ```
 
@@ -100,7 +100,7 @@ cxt -w snapshot.gz --compress src/ # write gzip-compressed file
 ### Output format
 
 ```bash
-cxt --format xml src/       # default — XML with <file path="…"> tags
+cxt --format xml src/       # default : XML with <file path="…"> tags
 cxt --format markdown src/  # Markdown with ## headings and fenced code blocks
 ```
 
@@ -188,14 +188,14 @@ Launch with `cxt` or `cxt --tui` to browse and select files interactively.
 |------|-------------|
 | `-p, --print` | Print to stdout (also copies to clipboard) |
 | `-w, --write <FILE>` | Write output to a file |
-| `--compress` | Gzip-compress output — requires `--write` |
+| `--compress` | Gzip-compress output, requires `--write` |
 | `--format <xml\|markdown>` | Output format (default: `xml`) |
 | `-r, --relative` | Use relative paths in headers |
 | `-n, --no-path` | Omit file path headers |
 | `--hidden` | Include hidden / dot files |
-| `-i, --ignore <PATH>` | Ignore a path or glob pattern — repeatable |
-| `--ext <EXT[,EXT…]>` | Include only files with these extensions — repeatable |
-| `--lang <LANG[,LANG…]>` | Include only files for this language — repeatable |
+| `-i, --ignore <PATH>` | Ignore a path or glob pattern, repeatable |
+| `--ext <EXT[,EXT…]>` | Include only files with these extensions, repeatable |
+| `--lang <LANG[,LANG…]>` | Include only files for this language, repeatable |
 | `--no-sort` | Non-deterministic output order (faster for large trees) |
 | `-t, --tui` | Launch interactive TUI file picker |
 
@@ -213,4 +213,4 @@ For package manager installs, use the respective remove command (`cargo uninstal
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT : see [LICENSE](LICENSE).
