@@ -8,6 +8,7 @@ mod content_aggregator;
 mod formatter;
 mod image_handler;
 mod lang;
+mod notebook;
 mod output_handler;
 mod token_counter;
 mod tui;

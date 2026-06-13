@@ -498,6 +498,7 @@ dependencies = [
  "pathdiff",
  "predicates",
  "ratatui",
+ "serde_json",
  "tempfile",
  "tiktoken-rs",
  "tui-tree-widget",

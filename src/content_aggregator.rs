@@ -5,6 +5,13 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+fn is_notebook(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("ipynb"))
+        .unwrap_or(false)
+}
+
 /// Files larger than this use byte estimation instead of exact BPE counting.
 const MAX_EXACT_BYTES: u64 = 5 * 1024 * 1024; // 5 MB
 
@@ -135,12 +142,58 @@ impl ContentAggregator {
         input_paths.iter().any(|p| Path::new(p) == path)
     }
 
+    /// Try to handle `read_path` as a Jupyter notebook.
+    /// Returns Ok(true) if it was handled (written or deliberately skipped),
+    /// Ok(false) if the caller should fall back to normal raw-text handling.
+    fn try_write_notebook<W: Write>(
+        &mut self,
+        read_path: &Path,
+        display_path: &Path,
+        writer: &mut W,
+    ) -> Result<bool> {
+        let size = read_path.metadata().map(|m| m.len()).unwrap_or(0);
+        if size > crate::notebook::MAX_NOTEBOOK_BYTES {
+            eprintln!(
+                "Warning: notebook '{}' exceeds parse limit; using raw text.",
+                read_path.display()
+            );
+            return Ok(false);
+        }
+        let bytes = match fs::read(read_path) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Warning: Failed to read file '{}': {e}", read_path.display());
+                return Ok(true); // skip; raw path would also fail
+            }
+        };
+        match crate::notebook::extract_notebook_code(&bytes) {
+            Ok(code) => {
+                self.formatter.write_file_header(display_path, writer)?;
+                self.token_count += self.token_counter.count(&code);
+                writer.write_all(code.as_bytes())?;
+                writer.write_all(self.formatter.file_footer().as_bytes())?;
+                self.file_count += 1;
+                Ok(true)
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to parse notebook '{}': {e}. Using raw text.",
+                    read_path.display()
+                );
+                Ok(false)
+            }
+        }
+    }
+
     /// Aggregate a single file; canonicalises path before passing to formatter.
     fn aggregate_file<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
         if !self.extension_allowed(path) {
             return Ok(());
         }
         let display_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if is_notebook(path) && self.try_write_notebook(path, &display_path, writer)? {
+            return Ok(());
+        }
         let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
         if file_size <= MAX_EXACT_BYTES {
             let content = match fs::read(path) {
@@ -191,6 +244,9 @@ impl ContentAggregator {
     /// Like `aggregate_file` but skips `canonicalize()` — path is already canonical.
     /// Called from `aggregate_directory` which pre-canonicalises the base directory once.
     fn aggregate_file_precanon<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
+        if is_notebook(path) && self.try_write_notebook(path, path, writer)? {
+            return Ok(());
+        }
         let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
         if file_size <= MAX_EXACT_BYTES {
             let content = match fs::read(path) {

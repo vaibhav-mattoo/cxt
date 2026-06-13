@@ -6,7 +6,7 @@ pub struct LangDef {
 
 pub static LANGUAGES: &[LangDef] = &[
     LangDef { name: "rust",       aliases: &["rs"],               extensions: &["rs", "toml"] },
-    LangDef { name: "python",     aliases: &["py"],               extensions: &["py", "pyi", "pyw"] },
+    LangDef { name: "python",     aliases: &["py"],               extensions: &["py", "pyi", "pyw", "ipynb"] },
     LangDef { name: "javascript", aliases: &["js", "node"],       extensions: &["js", "mjs", "cjs", "jsx"] },
     LangDef { name: "typescript", aliases: &["ts"],               extensions: &["ts", "tsx", "mts", "cts"] },
     LangDef { name: "go",         aliases: &[],                   extensions: &["go", "mod", "sum"] },

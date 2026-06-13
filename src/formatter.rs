@@ -74,6 +74,7 @@ pub fn language_for_extension(path: &Path) -> &'static str {
         Some("nix") => "nix",
         Some("proto") => "protobuf",
         Some("graphql" | "gql") => "graphql",
+        Some("ipynb") => "python",
         _ => "",
     }
 }
