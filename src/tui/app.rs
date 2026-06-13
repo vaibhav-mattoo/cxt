@@ -41,6 +41,7 @@ pub struct AppState {
     pub visible_height: usize,
     pub original_cursor: usize,
     pub original_scroll_offset: usize,
+    pub list_area: Option<ratatui::layout::Rect>,
     selected_file_count_cache: Option<usize>,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
     dir_files_cache: RefCell<HashMap<PathBuf, Rc<Vec<PathBuf>>>>,
@@ -48,7 +49,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new() -> io::Result<Self> {
+    pub fn new(relative: bool, no_path: bool) -> io::Result<Self> {
         let root_dir = env::current_dir()?;
         let mut dir_cache = HashMap::new();
         let root_entries = read_dir_sorted(&root_dir)?;
@@ -72,8 +73,8 @@ impl AppState {
             dir_cache,
             root_history: Vec::new(),
             selected: HashSet::new(),
-            relative: false,
-            no_path: false,
+            relative,
+            no_path,
             show_help: false,
             search_history: HashMap::new(),
             mode: AppMode::Normal,
@@ -84,6 +85,7 @@ impl AppState {
             visible_height: 10,
             original_cursor: 0,
             original_scroll_offset: 0,
+            list_area: None,
             selected_file_count_cache: None,
             dir_select_cache: RefCell::new(HashMap::new()),
             dir_files_cache: RefCell::new(HashMap::new()),

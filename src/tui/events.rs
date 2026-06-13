@@ -1,4 +1,6 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Position;
+use std::path::PathBuf;
 
 use crate::tui::app::{AppMode, AppState};
 
@@ -103,6 +105,59 @@ fn handle_search_navigating(
         _ => {}
     }
     None
+}
+
+pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut String) {
+    if app.show_help {
+        return;
+    }
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if app.mode == AppMode::Normal {
+                let pos = Position::new(mouse.column, mouse.row);
+                let clicked: Option<Vec<PathBuf>> =
+                    app.tree_state.rendered_at(pos).map(|id| id.to_vec());
+                if let Some(id) = clicked {
+                    if let Some(path) = id.last().cloned() {
+                        app.tree_state.select(id);
+                        let is_dir = path.is_dir();
+                        app.toggle_selection(path, is_dir);
+                    }
+                }
+            } else if let Some(area) = app.list_area {
+                let inner_top = area.y + 1;
+                if mouse.row >= inner_top {
+                    let idx =
+                        app.search_scroll_offset + (mouse.row - inner_top) as usize;
+                    if idx < app.search_results.len() {
+                        app.search_cursor = idx;
+                        if let Some(r) = app.search_results.get(idx) {
+                            let path = r.path.clone();
+                            let is_dir = r.is_dir;
+                            app.toggle_selection(path, is_dir);
+                        }
+                    }
+                }
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            if app.mode == AppMode::Normal {
+                app.tree_state.scroll_down(1);
+            } else if app.search_cursor + 1 < app.search_results.len() {
+                app.search_cursor += 1;
+                app.sync_search_scroll(app.visible_height);
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            if app.mode == AppMode::Normal {
+                app.tree_state.scroll_up(1);
+            } else if app.search_cursor > 0 {
+                app.search_cursor -= 1;
+                app.sync_search_scroll(app.visible_height);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn handle_normal(

@@ -14,14 +14,20 @@ use std::{io, io::Write, time::Duration};
 
 use app::{AppMode, AppState};
 
-pub fn run_tui() -> Result<Vec<String>> {
+pub struct TuiOutcome {
+    pub paths: Vec<String>,
+    pub relative: bool,
+    pub no_path: bool,
+}
+
+pub fn run_tui(relative: bool, no_path: bool) -> Result<TuiOutcome> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm_execute!(stdout, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let res = tui_main(&mut terminal);
+    let res = tui_main(&mut terminal, relative, no_path);
 
     disable_raw_mode()?;
     crossterm_execute!(
@@ -32,8 +38,12 @@ pub fn run_tui() -> Result<Vec<String>> {
     res
 }
 
-fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec<String>> {
-    let mut app = AppState::new().context("Failed to read current directory")?;
+fn tui_main(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    relative: bool,
+    no_path: bool,
+) -> Result<TuiOutcome> {
+    let mut app = AppState::new(relative, no_path).context("Failed to read current directory")?;
     let mut message = String::new();
 
     loop {
@@ -50,12 +60,22 @@ fn tui_main(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Vec
         terminal.backend_mut().flush()?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key_event) = event::read()? {
-                if let Some(result) =
-                    events::handle_key_event(&mut app, key_event, &mut message)
-                {
-                    return Ok(result);
+            match event::read()? {
+                Event::Key(key_event) => {
+                    if let Some(paths) =
+                        events::handle_key_event(&mut app, key_event, &mut message)
+                    {
+                        return Ok(TuiOutcome {
+                            paths,
+                            relative: app.relative,
+                            no_path: app.no_path,
+                        });
+                    }
                 }
+                Event::Mouse(mouse_event) => {
+                    events::handle_mouse_event(&mut app, mouse_event, &mut message);
+                }
+                _ => {}
             }
         }
     }

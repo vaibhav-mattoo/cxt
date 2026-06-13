@@ -102,14 +102,18 @@ fn main() -> Result<()> {
 
     let stdin_is_piped = !atty::is(atty::Stream::Stdin);
 
+    let mut args = args;
+
     let paths: Vec<String> = if args.tui {
         // --tui explicitly requested: always launch interactive picker, ignore stdin.
-        let selected = tui::run_tui()?;
-        if selected.is_empty() {
+        let outcome = tui::run_tui(args.relative, args.no_path)?;
+        args.relative = outcome.relative;
+        args.no_path = outcome.no_path;
+        if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
         }
-        selected
+        outcome.paths
     } else if stdin_is_piped {
         // Stdin is a pipe: read newline-delimited paths from it.
         let stdin_paths = read_stdin_paths()?;
@@ -126,12 +130,14 @@ fn main() -> Result<()> {
         combined
     } else if args.paths.is_empty() {
         // No stdin pipe, no CLI args: fall back to interactive TUI.
-        let selected = tui::run_tui()?;
-        if selected.is_empty() {
+        let outcome = tui::run_tui(args.relative, args.no_path)?;
+        args.relative = outcome.relative;
+        args.no_path = outcome.no_path;
+        if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
         }
-        selected
+        outcome.paths
     } else {
         args.paths.clone()
     };

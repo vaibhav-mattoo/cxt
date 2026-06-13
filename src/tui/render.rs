@@ -13,6 +13,7 @@ use std::{
     env, fs,
     path::PathBuf,
 };
+use pathdiff::diff_paths;
 use tui_tree_widget::{Tree, TreeItem};
 
 use super::theme;
@@ -49,6 +50,7 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize)
         .split(f.area());
 
     let inner_list_height = chunks[1].height.saturating_sub(2);
+    app.list_area = Some(chunks[1]);
 
     render_path_bar(f, app, chunks[0]);
     render_file_list(f, app, chunks[1], inner_list_height as usize);
@@ -82,13 +84,11 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
         let path = if app.no_path {
             "[No Path Headers]".to_string()
         } else if app.relative {
-            match app
-                .root_dir
-                .strip_prefix(env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-            {
-                Ok(rel) => rel.display().to_string(),
-                Err(_) => app.root_dir.display().to_string(),
-            }
+            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            diff_paths(&app.root_dir, &cwd)
+                .unwrap_or_else(|| app.root_dir.clone())
+                .display()
+                .to_string()
         } else {
             app.root_dir.display().to_string()
         };
