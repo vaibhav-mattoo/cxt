@@ -122,23 +122,19 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
         .take(list_height)
         .map(|(i, commit)| {
             let is_cursor = i == app.git_commit_cursor;
-            let base_style = if is_cursor {
-                Style::default().bg(theme::CURSOR_BG).fg(theme::FG)
+            let line_style = if is_cursor {
+                Style::default().bg(theme::CURSOR_BG)
             } else {
-                Style::default().fg(theme::FG)
+                Style::default()
             };
+            let fg_style = Style::default().fg(theme::FG);
             let mut h_style = hash_style;
             if is_cursor {
                 h_style = h_style.bg(theme::CURSOR_BG);
             }
-            let marker_style = if is_cursor {
-                Style::default()
-                    .fg(theme::SELECTED)
-                    .bg(theme::CURSOR_BG)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme::SELECTED).add_modifier(Modifier::BOLD)
-            };
+            let marker_style = Style::default()
+                .fg(theme::SELECTED)
+                .add_modifier(Modifier::BOLD);
             let marker = if app.is_git_commit_marked(&commit.hash) {
                 "✓ "
             } else {
@@ -149,16 +145,16 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
                 if let Some(pos) = commit.display.find(commit.hash.as_str()) {
                     let before = commit.display[..pos].to_string();
                     let after = commit.display[pos + commit.hash.len()..].to_string();
-                    spans.push(Span::styled(before, base_style));
+                    spans.push(Span::styled(before, fg_style));
                     spans.push(Span::styled(commit.hash.clone(), h_style));
-                    spans.push(Span::styled(after, base_style));
+                    spans.push(Span::styled(after, fg_style));
                 } else {
-                    spans.push(Span::styled(commit.display.clone(), base_style));
+                    spans.push(Span::styled(commit.display.clone(), fg_style));
                 }
             } else {
-                spans.push(Span::styled(commit.display.clone(), base_style));
+                spans.push(Span::styled(commit.display.clone(), fg_style));
             }
-            ListItem::new(Line::from(spans))
+            ListItem::new(Line::from(spans)).style(line_style)
         })
         .collect();
     let commit_list = List::new(commit_items).block(panel("Commits", app.git_panel_focused));
@@ -171,10 +167,10 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
         .take(list_height)
         .map(|(i, file)| {
             let is_cursor = i == app.git_files_cursor;
-            let style = if is_cursor {
-                Style::default().bg(theme::CURSOR_BG).fg(theme::FG)
+            let line_style = if is_cursor {
+                Style::default().bg(theme::CURSOR_BG)
             } else {
-                Style::default().fg(theme::FG)
+                Style::default()
             };
             let is_selected = app.is_git_file_selected(file);
             let marker = if is_selected { "✓ " } else { "  " };
@@ -185,9 +181,9 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
                         .fg(theme::SELECTED)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(file.clone(), style),
+                Span::styled(file.clone(), Style::default().fg(theme::FG)),
             ]);
-            ListItem::new(line)
+            ListItem::new(line).style(line_style)
         })
         .collect();
     let file_list = List::new(file_items).block(panel("Files", !app.git_panel_focused));
@@ -393,6 +389,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Backspace", "Parent dir"),
         ("Space", "Select/Unselect"),
         ("/ or Ctrl-f", "Search files"),
+        ("Tab", "Toggle git tree"),
         ("?", "Toggle help"),
         ("c", "Confirm"),
         ("q/Ctrl-c", "Quit"),
