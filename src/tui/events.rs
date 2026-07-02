@@ -45,7 +45,7 @@ fn handle_git_tree(
         }
         KeyCode::Char(' ') => {
             if app.git_panel_focused {
-                app.toggle_git_commit_selection();
+                app.toggle_git_commit_mark();
             } else {
                 app.toggle_git_file_selection();
             }

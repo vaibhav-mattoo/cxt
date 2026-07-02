@@ -131,21 +131,33 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
             if is_cursor {
                 h_style = h_style.bg(theme::CURSOR_BG);
             }
-            let spans: Vec<Span<'static>> = if !commit.hash.is_empty() {
+            let marker_style = if is_cursor {
+                Style::default()
+                    .fg(theme::SELECTED)
+                    .bg(theme::CURSOR_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::SELECTED).add_modifier(Modifier::BOLD)
+            };
+            let marker = if app.is_git_commit_marked(&commit.hash) {
+                "✓ "
+            } else {
+                "  "
+            };
+            let mut spans: Vec<Span<'static>> = vec![Span::styled(marker, marker_style)];
+            if !commit.hash.is_empty() {
                 if let Some(pos) = commit.display.find(commit.hash.as_str()) {
                     let before = commit.display[..pos].to_string();
                     let after = commit.display[pos + commit.hash.len()..].to_string();
-                    vec![
-                        Span::styled(before, base_style),
-                        Span::styled(commit.hash.clone(), h_style),
-                        Span::styled(after, base_style),
-                    ]
+                    spans.push(Span::styled(before, base_style));
+                    spans.push(Span::styled(commit.hash.clone(), h_style));
+                    spans.push(Span::styled(after, base_style));
                 } else {
-                    vec![Span::styled(commit.display.clone(), base_style)]
+                    spans.push(Span::styled(commit.display.clone(), base_style));
                 }
             } else {
-                vec![Span::styled(commit.display.clone(), base_style)]
-            };
+                spans.push(Span::styled(commit.display.clone(), base_style));
+            }
             ListItem::new(Line::from(spans))
         })
         .collect();
