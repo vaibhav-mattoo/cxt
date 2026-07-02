@@ -77,6 +77,20 @@ pub struct Args {
                 inside a <context> block; markdown uses ## headings and fenced code blocks"
     )]
     pub format: crate::formatter::FormatChoice,
+    #[arg(
+        long = "df",
+        num_args = 0..=1,
+        default_missing_value = "0",
+        help = "Copy git diff output to clipboard. Use --df 1 for HEAD~1..HEAD, --df 2 for HEAD~2..HEAD, etc."
+    )]
+    pub df: Option<u8>,
+    #[arg(
+        long = "st",
+        num_args = 0..=1,
+        default_missing_value = "0",
+        help = "Copy git status modified files to clipboard. Use --st N for files changed in last N commits."
+    )]
+    pub st: Option<u8>,
 }
 
 impl Args {

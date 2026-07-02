@@ -101,10 +101,115 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Some(n) = args.df {
+        let diff_output = if n == 0 {
+            std::process::Command::new("git")
+                .args(["diff"])
+                .output()?
+        } else {
+            let range = format!("HEAD~{n}..HEAD");
+            std::process::Command::new("git")
+                .args(["diff", &range])
+                .output()?
+        };
+        if !diff_output.status.success() {
+            let stderr = String::from_utf8_lossy(&diff_output.stderr);
+            anyhow::bail!("git diff failed: {stderr}");
+        }
+        let diff_text = String::from_utf8_lossy(&diff_output.stdout);
+        if diff_text.is_empty() {
+            println!("No diff output.");
+            return Ok(());
+        }
+        let mut output_handler = OutputHandler::new();
+        let mut cw = output_handler.get_clipboard_writer()?;
+        let counter = token_counter::TokenCounter::new();
+        let tokens = counter.count(&diff_text);
+        if args.print {
+            let stdout = io::stdout();
+            let mut stdout_lock = stdout.lock();
+            {
+                let mut tee = TeeWriter {
+                    a: &mut stdout_lock,
+                    b: &mut cw,
+                };
+                tee.write_all(diff_text.as_bytes())?;
+            }
+        } else {
+            cw.write_all(diff_text.as_bytes())?;
+        }
+        cw.finish()?;
+        let diff_label = if n == 0 {
+            "git diff".to_string()
+        } else {
+            format!("git diff HEAD~{n}..HEAD")
+        };
+        println!(
+            "Copied {} tokens ({}) to clipboard.",
+            token_counter::format_count(tokens),
+            diff_label
+        );
+        return Ok(());
+    }
+    if let Some(n) = args.st {
+        let output = if n == 0 {
+            std::process::Command::new("git")
+                .args(["diff", "--name-only", "HEAD"])
+                .output()?
+        } else {
+            let range = format!("HEAD~{n}..HEAD");
+            std::process::Command::new("git")
+                .args(["diff", "--name-only", &range])
+                .output()?
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git diff --name-only failed: {stderr}");
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if text.trim().is_empty() {
+            println!("No changed files.");
+            return Ok(());
+        }
+        let paths: Vec<String> = text.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+        for p in &paths {
+            println!("  {p}");
+        }
+        let fmt = formatter::build_formatter(args.format, args.no_path, args.relative);
+        let mut aggregator = ContentAggregator::new(
+            fmt,
+            args.hidden,
+            args.ignore.clone().into_iter().collect::<Vec<_>>(),
+            !args.no_sort,
+            std::collections::HashSet::new(),
+        );
+        let mut output_handler = OutputHandler::new();
+        let mut cw = output_handler.get_clipboard_writer()?;
+        if args.print {
+            let stdout = io::stdout();
+            let mut stdout_lock = stdout.lock();
+            {
+                let mut tee = TeeWriter {
+                    a: &mut stdout_lock,
+                    b: &mut cw,
+                };
+                aggregator.aggregate_paths(&paths, &mut tee)?;
+            }
+        } else {
+            aggregator.aggregate_paths(&paths, &mut cw)?;
+        }
+        cw.finish()?;
+        eprintln_binary_skip_summary(&aggregator);
+        println!(
+            "Copied {} tokens from {} file{} to clipboard.",
+            token_counter::format_count(aggregator.token_count()),
+            aggregator.file_count(),
+            if aggregator.file_count() == 1 { "" } else { "s" }
+        );
+        return Ok(());
+    }
     let stdin_is_piped = !atty::is(atty::Stream::Stdin);
-
     let mut args = args;
-
     let paths: Vec<String> = if args.tui {
         // --tui explicitly requested: always launch interactive picker, ignore stdin.
         let outcome = tui::run_tui(args.relative, args.no_path)?;
