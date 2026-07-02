@@ -289,16 +289,23 @@ impl AppState {
                         let graph_hash = parts.next().unwrap_or("");
                         let message = parts.next().unwrap_or("");
                         
-                        let hash = graph_hash
+                        let long_hash = graph_hash
                             .split_whitespace()
                             .find(|s| s.chars().all(|c| c.is_ascii_hexdigit()) && s.len() >= 6)
-                            .map(|s| s[..6].to_string())
-                            .unwrap_or_default();
+                            .unwrap_or("");
+                        
+                        let hash = if long_hash.len() >= 6 { long_hash[..6].to_string() } else { String::new() };
+                        
+                        let display_graph = if !long_hash.is_empty() {
+                            graph_hash.replacen(long_hash, &hash, 1)
+                        } else {
+                            graph_hash.to_string()
+                        };
                         
                         let display = if message.is_empty() {
-                            graph_hash.to_string()
+                            display_graph
                         } else {
-                            format!("{} {}", graph_hash, message)
+                            format!("{} {}", display_graph, message)
                         };
                         
                         GitCommit { display, hash }
