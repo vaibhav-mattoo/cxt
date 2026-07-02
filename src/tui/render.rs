@@ -10,14 +10,14 @@ use ratatui::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
+    env,
     path::PathBuf,
 };
 use pathdiff::diff_paths;
 use tui_tree_widget::{Tree, TreeItem};
 
 use super::theme;
-use crate::tui::app::{AppMode, AppState};
+use crate::tui::app::{AppMode, AppState, DirItem};
 
 fn panel(title: &str, focused: bool) -> Block<'static> {
     Block::default()
@@ -337,7 +337,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
 /// (top-level entries plus all recursively opened subdirectories).
 fn collect_visible_dirs(
     dir: &PathBuf,
-    dir_cache: &HashMap<PathBuf, Vec<fs::DirEntry>>,
+    dir_cache: &HashMap<PathBuf, Vec<DirItem>>,
     open: &HashSet<Vec<PathBuf>>,
 ) -> Vec<PathBuf> {
     let Some(entries) = dir_cache.get(dir) else {
@@ -346,7 +346,7 @@ fn collect_visible_dirs(
     let mut result = Vec::new();
     for entry in entries {
         let path = entry.path();
-        if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+        if entry.is_dir() {
             result.push(path.clone());
             let is_open = open.iter().any(|kp| kp.last() == Some(&path));
             if is_open {
@@ -401,7 +401,7 @@ fn highlight_matches(
 /// Closed directories with cached entries include flat stubs so the ▶ symbol shows.
 fn build_styled_tree_items(
     dir: &PathBuf,
-    dir_cache: &HashMap<PathBuf, Vec<fs::DirEntry>>,
+    dir_cache: &HashMap<PathBuf, Vec<DirItem>>,
     open: &HashSet<Vec<PathBuf>>,
     selected: &HashSet<PathBuf>,
     fully_selected_dirs: &HashSet<PathBuf>,
@@ -415,7 +415,7 @@ fn build_styled_tree_items(
         .iter()
         .filter_map(|entry| {
             let path = entry.path();
-            let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+            let is_dir = entry.is_dir();
             let raw_name = entry.file_name().to_string_lossy().to_string();
             let display_name = if is_dir {
                 format!("{}/", raw_name)

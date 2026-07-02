@@ -2,7 +2,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    env, fs, io,
+    env, io,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -23,14 +23,43 @@ pub struct SearchResult {
     pub match_indices: Vec<usize>,
 }
 
+/// Detect whether `dir` is inside a git work-tree.
+fn is_git_repo(dir: &Path) -> bool {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[derive(Clone)]
+pub struct DirItem {
+    path: PathBuf,
+    file_name: std::ffi::OsString,
+    is_dir: bool,
+}
+impl DirItem {
+    pub fn path(&self) -> PathBuf {
+        self.path.clone()
+    }
+    pub fn file_name(&self) -> &std::ffi::OsStr {
+        &self.file_name
+    }
+    pub fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+}
+
 pub struct AppState {
     pub root_dir: PathBuf,
     pub tree_state: tui_tree_widget::TreeState<PathBuf>,
-    pub dir_cache: HashMap<PathBuf, Vec<fs::DirEntry>>,
+    pub dir_cache: HashMap<PathBuf, Vec<DirItem>>,
     pub root_history: Vec<PathBuf>,
     pub selected: HashSet<PathBuf>,
     pub relative: bool,
     pub no_path: bool,
+    pub respect_gitignore: bool,
     pub show_help: bool,
     pub search_history: HashMap<PathBuf, (String, Vec<SearchResult>)>,
     pub mode: AppMode,
@@ -51,18 +80,19 @@ pub struct AppState {
 impl AppState {
     pub fn new(relative: bool, no_path: bool) -> io::Result<Self> {
         let root_dir = env::current_dir()?;
+        let respect_gitignore = is_git_repo(&root_dir);
         let mut dir_cache = HashMap::new();
-        let root_entries = read_dir_sorted(&root_dir)?;
+        let root_entries = read_dir_sorted(&root_dir, respect_gitignore)?;
 
         // Eagerly load one level of subdirs so ▶ indicators appear immediately.
         let subdirs: Vec<PathBuf> = root_entries
             .iter()
-            .filter(|e| e.metadata().map(|m| m.is_dir()).unwrap_or(false))
+            .filter(|e| e.is_dir())
             .map(|e| e.path())
             .collect();
         dir_cache.insert(root_dir.clone(), root_entries);
         for subdir in subdirs {
-            if let Ok(sub_entries) = read_dir_sorted(&subdir) {
+            if let Ok(sub_entries) = read_dir_sorted(&subdir, respect_gitignore) {
                 dir_cache.insert(subdir, sub_entries);
             }
         }
@@ -75,6 +105,7 @@ impl AppState {
             selected: HashSet::new(),
             relative,
             no_path,
+            respect_gitignore,
             show_help: false,
             search_history: HashMap::new(),
             mode: AppMode::Normal,
@@ -124,7 +155,7 @@ impl AppState {
     pub fn toggle_selection(&mut self, path: PathBuf, is_dir: bool) {
         self.invalidate_caches();
         if is_dir {
-            let files = files_under(&path);
+            let files = files_under(&path, self.respect_gitignore);
             let all = !files.is_empty() && files.iter().all(|f| self.selected.contains(f));
             if all {
                 for f in files {
@@ -144,7 +175,7 @@ impl AppState {
         if let Some(v) = self.dir_files_cache.borrow().get(dir) {
             return Rc::clone(v);
         }
-        let files = Rc::new(files_under(dir));
+        let files = Rc::new(files_under(dir, self.respect_gitignore));
         self.dir_files_cache
             .borrow_mut()
             .insert(dir.to_path_buf(), Rc::clone(&files));
@@ -212,18 +243,20 @@ impl AppState {
         if self.dir_cache.contains_key(dir) {
             return;
         }
-        let Ok(entries) = read_dir_sorted(dir) else {
+        let Ok(entries) = read_dir_sorted(dir, self.respect_gitignore) else {
             return;
         };
         let subdirs: Vec<PathBuf> = entries
             .iter()
-            .filter(|e| e.metadata().map(|m| m.is_dir()).unwrap_or(false))
+            .filter(|e| e.is_dir())
             .map(|e| e.path())
             .collect();
         self.dir_cache.insert(dir.clone(), entries);
         for subdir in subdirs {
             if let std::collections::hash_map::Entry::Vacant(e) = self.dir_cache.entry(subdir) {
-                if let Ok(sub_entries) = read_dir_sorted(e.key()) {
+                if let Ok(sub_entries) =
+                    read_dir_sorted(e.key(), self.respect_gitignore)
+                {
                     e.insert(sub_entries);
                 }
             }
@@ -295,10 +328,10 @@ impl AppState {
         if self.search_query.is_empty() {
             self.search_results.clear();
             if let Some(entries) = self.dir_cache.get(&self.root_dir) {
-                for entry in entries {
+            for entry in entries {
                     let path = entry.path();
                     let file_name = entry.file_name().to_string_lossy().to_string();
-                    let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                    let is_dir = entry.is_dir();
                     self.search_results.push(SearchResult {
                         path,
                         display_name: file_name,
@@ -317,7 +350,7 @@ impl AppState {
 
         let walker = ignore::WalkBuilder::new(&self.root_dir)
             .hidden(false)
-            .git_ignore(false)
+            .git_ignore(self.respect_gitignore)
             .follow_links(false)
             .build();
 
@@ -404,10 +437,10 @@ impl AppState {
 }
 
 /// Returns all files under `dir` using the same walker settings as path collection.
-pub fn files_under(dir: &Path) -> Vec<PathBuf> {
+pub fn files_under(dir: &Path, respect_gitignore: bool) -> Vec<PathBuf> {
     ignore::WalkBuilder::new(dir)
         .hidden(false)
-        .git_ignore(false)
+        .git_ignore(respect_gitignore)
         .follow_links(true)
         .build()
         .filter_map(|e| e.ok())
@@ -416,11 +449,24 @@ pub fn files_under(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<fs::DirEntry>> {
-    let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
-    entries.sort_by_key(|e| {
-        let md = e.metadata();
-        (!md.as_ref().map(|m| m.is_dir()).unwrap_or(false), e.file_name())
-    });
+pub fn read_dir_sorted(dir: &PathBuf, respect_gitignore: bool) -> io::Result<Vec<DirItem>> {
+    let mut entries: Vec<DirItem> = ignore::WalkBuilder::new(dir)
+        .max_depth(Some(1))
+        .hidden(false)
+        .git_ignore(respect_gitignore)
+        .follow_links(true)
+        .build()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.depth() > 0)
+        .map(|e| {
+            let is_dir = e.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+            DirItem {
+                path: e.path().to_path_buf(),
+                file_name: e.file_name().to_os_string(),
+                is_dir,
+            }
+        })
+        .collect();
+    entries.sort_by_key(|e| (!e.is_dir(), e.file_name().to_os_string()));
     Ok(entries)
 }
