@@ -2,7 +2,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    env, io,
+    env, fs, io,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -72,6 +72,7 @@ pub struct AppState {
     pub original_scroll_offset: usize,
     pub list_area: Option<ratatui::layout::Rect>,
     selected_file_count_cache: Option<usize>,
+    selected_loc_cache: Option<u64>,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
     dir_files_cache: RefCell<HashMap<PathBuf, Rc<Vec<PathBuf>>>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
@@ -118,6 +119,7 @@ impl AppState {
             original_scroll_offset: 0,
             list_area: None,
             selected_file_count_cache: None,
+            selected_loc_cache: None,
             dir_select_cache: RefCell::new(HashMap::new()),
             dir_files_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
@@ -149,6 +151,7 @@ impl AppState {
 impl AppState {
     fn invalidate_caches(&mut self) {
         self.selected_file_count_cache = None;
+        self.selected_loc_cache = None;
         self.dir_select_cache.get_mut().clear();
     }
 
@@ -227,6 +230,23 @@ impl AppState {
         let count = self.selected.len();
         self.selected_file_count_cache = Some(count);
         count
+    }
+
+    pub fn selected_loc(&mut self) -> u64 {
+        if let Some(cached) = self.selected_loc_cache {
+            return cached;
+        }
+        let mut loc: u64 = 0;
+        for path in &self.selected {
+            if let Ok(bytes) = fs::read(path) {
+                loc += bytes.iter().filter(|&&b| b == b'\n').count() as u64;
+                if !bytes.is_empty() && *bytes.last().unwrap() != b'\n' {
+                    loc += 1;
+                }
+            }
+        }
+        self.selected_loc_cache = Some(loc);
+        loc
     }
 
     /// Returns the path currently highlighted in the tree cursor.

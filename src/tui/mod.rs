@@ -52,9 +52,10 @@ fn tui_main(
             app.sync_search_scroll(app.visible_height);
         }
         let file_count = app.selected_file_count();
+        let loc_count = app.selected_loc();
         let mut rendered_height: u16 = 0;
         terminal.draw(|f| {
-            rendered_height = render::draw(f, &mut app, &message, file_count);
+            rendered_height = render::draw(f, &mut app, &message, file_count, loc_count);
         })?;
         app.visible_height = rendered_height as usize;
         terminal.backend_mut().flush()?;

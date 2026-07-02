@@ -38,7 +38,7 @@ fn panel(title: &str, focused: bool) -> Block<'static> {
 }
 
 /// Render the full TUI frame and return the inner file-list height in rows.
-pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize) -> u16 {
+pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize, loc_count: u64) -> u16 {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -48,18 +48,14 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize)
             Constraint::Length(1),
         ])
         .split(f.area());
-
     let inner_list_height = chunks[1].height.saturating_sub(2);
     app.list_area = Some(chunks[1]);
-
     render_path_bar(f, app, chunks[0]);
     render_file_list(f, app, chunks[1], inner_list_height as usize);
-    render_status_bar(f, chunks[2], message, file_count);
-
+    render_status_bar(f, chunks[2], message, file_count, loc_count);
     if app.show_help {
         render_help_overlay(f, f.area());
     }
-
     inner_list_height
 }
 
@@ -214,7 +210,7 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
-fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize) {
+fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64) {
     let hint_str = "space select   c copy   ? help   q quit ";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -223,11 +219,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize
             Constraint::Length(hint_str.len() as u16),
         ])
         .split(area);
-
     if message.is_empty() {
         let left = Line::from(vec![Span::styled(
             format!(
-                " {file_count} file{} selected",
+                " {file_count} file{} selected | {loc_count} LOC",
                 if file_count == 1 { "" } else { "s" }
             ),
             Style::default().fg(theme::SELECTED),
