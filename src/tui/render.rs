@@ -64,7 +64,7 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize,
 }
 
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
-    let (path, title_str, path_style) = if app.mode != AppMode::Normal {
+    let (path, title_str, path_style) = if app.mode != AppMode::Normal && app.mode != AppMode::GitTree {
         let search_display = format!("Search: {}", app.search_query);
         let title = if app.mode == AppMode::SearchFocused {
             "Enter to search, Esc to leave search".to_string()
