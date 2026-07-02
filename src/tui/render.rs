@@ -51,7 +51,11 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize,
     let inner_list_height = chunks[1].height.saturating_sub(2);
     app.list_area = Some(chunks[1]);
     render_path_bar(f, app, chunks[0]);
-    render_file_list(f, app, chunks[1], inner_list_height as usize);
+    if app.mode == AppMode::GitTree {
+        render_git_tree(f, app, chunks[1], inner_list_height as usize);
+    } else {
+        render_file_list(f, app, chunks[1], inner_list_height as usize);
+    }
     render_status_bar(f, chunks[2], message, file_count, loc_count);
     if app.show_help {
         render_help_overlay(f, f.area());
@@ -102,6 +106,57 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
         .style(path_style)
         .wrap(Wrap { trim: true });
     f.render_widget(path_widget, area);
+}
+
+fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    let commit_items: Vec<ListItem> = app
+        .git_commits
+        .iter()
+        .enumerate()
+        .skip(app.git_commit_scroll_offset)
+        .take(list_height)
+        .map(|(i, commit)| {
+            let style = if i == app.git_commit_cursor {
+                Style::default().bg(theme::CURSOR_BG).fg(theme::FG)
+            } else {
+                Style::default().fg(theme::FG)
+            };
+            ListItem::new(Line::from(vec![Span::styled(
+                commit.display.clone(),
+                style,
+            )]))
+        })
+        .collect();
+
+    let commit_list = List::new(commit_items).block(panel("Commits", app.git_panel_focused));
+    f.render_widget(commit_list, chunks[0]);
+
+    let file_items: Vec<ListItem> = app
+        .git_files
+        .iter()
+        .enumerate()
+        .skip(app.git_files_scroll_offset)
+        .take(list_height)
+        .map(|(i, file)| {
+            let style = if i == app.git_files_cursor {
+                Style::default().bg(theme::CURSOR_BG).fg(theme::FG)
+            } else {
+                Style::default().fg(theme::FG)
+            };
+            ListItem::new(Line::from(vec![Span::styled(
+                file.clone(),
+                style,
+            )]))
+        })
+        .collect();
+
+    let file_list = List::new(file_items).block(panel("Files", !app.git_panel_focused));
+    f.render_widget(file_list, chunks[1]);
 }
 
 fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {

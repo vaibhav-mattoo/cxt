@@ -12,6 +12,7 @@ pub enum AppMode {
     Normal,
     SearchFocused,
     SearchNavigating,
+    GitTree,
 }
 
 #[derive(Clone)]
@@ -21,6 +22,12 @@ pub struct SearchResult {
     pub is_dir: bool,
     pub match_score: i64,
     pub match_indices: Vec<usize>,
+}
+
+#[derive(Clone)]
+pub struct GitCommit {
+    pub display: String,
+    pub hash: String,
 }
 
 /// Detect whether `dir` is inside a git work-tree.
@@ -73,6 +80,13 @@ pub struct AppState {
     pub list_area: Option<ratatui::layout::Rect>,
     selected_file_count_cache: Option<usize>,
     selected_loc_cache: Option<u64>,
+    pub git_commits: Vec<GitCommit>,
+    pub git_commit_cursor: usize,
+    pub git_commit_scroll_offset: usize,
+    pub git_files: Vec<String>,
+    pub git_files_cursor: usize,
+    pub git_files_scroll_offset: usize,
+    pub git_panel_focused: bool,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
     dir_files_cache: RefCell<HashMap<PathBuf, Rc<Vec<PathBuf>>>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
@@ -120,6 +134,13 @@ impl AppState {
             list_area: None,
             selected_file_count_cache: None,
             selected_loc_cache: None,
+            git_commits: Vec::new(),
+            git_commit_cursor: 0,
+            git_commit_scroll_offset: 0,
+            git_files: Vec::new(),
+            git_files_cursor: 0,
+            git_files_scroll_offset: 0,
+            git_panel_focused: true,
             dir_select_cache: RefCell::new(HashMap::new()),
             dir_files_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
@@ -252,6 +273,113 @@ impl AppState {
     /// Returns the path currently highlighted in the tree cursor.
     pub fn highlighted_path(&self) -> Option<PathBuf> {
         self.tree_state.selected().last().cloned()
+    }
+
+    pub fn enter_git_tree_mode(&mut self) {
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["log", "--graph", "--pretty=format:%H%x00%s"])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                self.git_commits = stdout
+                    .lines()
+                    .map(|line| {
+                        let mut parts = line.splitn(2, '\0');
+                        let graph_hash = parts.next().unwrap_or("");
+                        let message = parts.next().unwrap_or("");
+                        
+                        let hash = graph_hash
+                            .split_whitespace()
+                            .find(|s| s.chars().all(|c| c.is_ascii_hexdigit()) && s.len() >= 6)
+                            .map(|s| s[..6].to_string())
+                            .unwrap_or_default();
+                        
+                        let display = if message.is_empty() {
+                            graph_hash.to_string()
+                        } else {
+                            format!("{} {}", graph_hash, message)
+                        };
+                        
+                        GitCommit { display, hash }
+                    })
+                    .collect();
+            } else {
+                self.git_commits = vec![GitCommit { 
+                    display: "Failed to load git log. Not a git repository?".to_string(), 
+                    hash: String::new() 
+                }];
+            }
+        } else {
+            self.git_commits = vec![GitCommit { 
+                display: "Failed to execute git command.".to_string(), 
+                hash: String::new() 
+            }];
+        }
+        
+        self.git_commit_cursor = 0;
+        self.git_files_cursor = 0;
+        self.git_commit_scroll_offset = 0;
+        self.git_files_scroll_offset = 0;
+        self.git_panel_focused = true;
+        self.fetch_git_files();
+        self.mode = AppMode::GitTree;
+    }
+
+    pub fn fetch_git_files(&mut self) {
+        if let Some(commit) = self.git_commits.get(self.git_commit_cursor) {
+            if !commit.hash.is_empty() {
+                if let Ok(output) = std::process::Command::new("git")
+                    .args(["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", &commit.hash])
+                    .output()
+                {
+                    if output.status.success() {
+                        self.git_files = String::from_utf8_lossy(&output.stdout)
+                            .lines()
+                            .map(String::from)
+                            .collect();
+                        self.git_files_cursor = 0;
+                        return;
+                    }
+                }
+            }
+        }
+        self.git_files.clear();
+        self.git_files_cursor = 0;
+    }
+
+    pub fn sync_git_scroll(&mut self, visible_height: usize) {
+        if self.git_panel_focused {
+            let len = self.git_commits.len();
+            if self.git_commit_cursor >= len {
+                self.git_commit_cursor = len.saturating_sub(1);
+            }
+            if len <= visible_height {
+                self.git_commit_scroll_offset = 0;
+                return;
+            }
+            if self.git_commit_cursor < self.git_commit_scroll_offset {
+                self.git_commit_scroll_offset = self.git_commit_cursor;
+            } else if self.git_commit_cursor >= self.git_commit_scroll_offset + visible_height {
+                self.git_commit_scroll_offset = self.git_commit_cursor + 1 - visible_height;
+            }
+            self.git_commit_scroll_offset = self.git_commit_scroll_offset.min(len.saturating_sub(visible_height));
+        } else {
+            let len = self.git_files.len();
+            if self.git_files_cursor >= len {
+                self.git_files_cursor = len.saturating_sub(1);
+            }
+            if len <= visible_height {
+                self.git_files_scroll_offset = 0;
+                return;
+            }
+            if self.git_files_cursor < self.git_files_scroll_offset {
+                self.git_files_scroll_offset = self.git_files_cursor;
+            } else if self.git_files_cursor >= self.git_files_scroll_offset + visible_height {
+                self.git_files_scroll_offset = self.git_files_cursor + 1 - visible_height;
+            }
+            self.git_files_scroll_offset = self.git_files_scroll_offset.min(len.saturating_sub(visible_height));
+        }
     }
 }
 

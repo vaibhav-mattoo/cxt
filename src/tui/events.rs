@@ -16,7 +16,49 @@ pub fn handle_key_event(
         AppMode::SearchFocused => handle_search_focused(app, key_event),
         AppMode::SearchNavigating => handle_search_navigating(app, key_event, message),
         AppMode::Normal => handle_normal(app, key_event, message),
+        AppMode::GitTree => handle_git_tree(app, key_event, message),
     }
+}
+
+fn handle_git_tree(
+    app: &mut AppState,
+    key_event: KeyEvent,
+    _message: &mut String,
+) -> Option<Vec<String>> {
+    match key_event.code {
+        KeyCode::Tab => {
+            app.git_panel_focused = !app.git_panel_focused;
+        }
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+        }
+        KeyCode::Char('q') => return Some(vec![]),
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(vec![])
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.git_panel_focused {
+                if app.git_commit_cursor > 0 {
+                    app.git_commit_cursor -= 1;
+                    app.fetch_git_files();
+                }
+            } else if app.git_files_cursor > 0 {
+                app.git_files_cursor -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.git_panel_focused {
+                if app.git_commit_cursor + 1 < app.git_commits.len() {
+                    app.git_commit_cursor += 1;
+                    app.fetch_git_files();
+                }
+            } else if app.git_files_cursor + 1 < app.git_files.len() {
+                app.git_files_cursor += 1;
+            }
+        }
+        _ => {}
+    }
+    None
 }
 
 fn handle_search_focused(app: &mut AppState, key_event: KeyEvent) -> Option<Vec<String>> {
@@ -124,17 +166,18 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                         app.toggle_selection(path, is_dir);
                     }
                 }
-            } else if let Some(area) = app.list_area {
-                let inner_top = area.y + 1;
-                if mouse.row >= inner_top {
-                    let idx =
-                        app.search_scroll_offset + (mouse.row - inner_top) as usize;
-                    if idx < app.search_results.len() {
-                        app.search_cursor = idx;
-                        if let Some(r) = app.search_results.get(idx) {
-                            let path = r.path.clone();
-                            let is_dir = r.is_dir;
-                            app.toggle_selection(path, is_dir);
+            } else if app.mode == AppMode::SearchFocused || app.mode == AppMode::SearchNavigating {
+                if let Some(area) = app.list_area {
+                    let inner_top = area.y + 1;
+                    if mouse.row >= inner_top {
+                        let idx = app.search_scroll_offset + (mouse.row - inner_top) as usize;
+                        if idx < app.search_results.len() {
+                            app.search_cursor = idx;
+                            if let Some(r) = app.search_results.get(idx) {
+                                let path = r.path.clone();
+                                let is_dir = r.is_dir;
+                                app.toggle_selection(path, is_dir);
+                            }
                         }
                     }
                 }
@@ -143,6 +186,15 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
         MouseEventKind::ScrollDown => {
             if app.mode == AppMode::Normal {
                 app.tree_state.scroll_down(1);
+            } else if app.mode == AppMode::GitTree {
+                if app.git_panel_focused {
+                    if app.git_commit_cursor + 1 < app.git_commits.len() {
+                        app.git_commit_cursor += 1;
+                        app.fetch_git_files();
+                    }
+                } else if app.git_files_cursor + 1 < app.git_files.len() {
+                    app.git_files_cursor += 1;
+                }
             } else if app.search_cursor + 1 < app.search_results.len() {
                 app.search_cursor += 1;
                 app.sync_search_scroll(app.visible_height);
@@ -151,6 +203,15 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
         MouseEventKind::ScrollUp => {
             if app.mode == AppMode::Normal {
                 app.tree_state.scroll_up(1);
+            } else if app.mode == AppMode::GitTree {
+                if app.git_panel_focused {
+                    if app.git_commit_cursor > 0 {
+                        app.git_commit_cursor -= 1;
+                        app.fetch_git_files();
+                    }
+                } else if app.git_files_cursor > 0 {
+                    app.git_files_cursor -= 1;
+                }
             } else if app.search_cursor > 0 {
                 app.search_cursor -= 1;
                 app.sync_search_scroll(app.visible_height);
@@ -237,6 +298,9 @@ fn handle_normal(
             if app.no_path {
                 app.relative = false;
             }
+        }
+        KeyCode::Tab => {
+            app.enter_git_tree_mode();
         }
         _ => {}
     }
