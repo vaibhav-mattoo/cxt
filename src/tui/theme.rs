@@ -8,3 +8,4 @@ pub const DIR: Color = tailwind::SKY.c300;
 pub const SELECTED: Color = tailwind::EMERALD.c400;
 pub const CURSOR_BG: Color = tailwind::SLATE.c800;
 pub const MATCH: Color = tailwind::AMBER.c400;
+pub const HASH: Color = tailwind::YELLOW.c400;

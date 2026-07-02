@@ -23,7 +23,7 @@ pub fn handle_key_event(
 fn handle_git_tree(
     app: &mut AppState,
     key_event: KeyEvent,
-    _message: &mut String,
+    message: &mut String,
 ) -> Option<Vec<String>> {
     match key_event.code {
         KeyCode::Tab => {
@@ -35,6 +35,20 @@ fn handle_git_tree(
         KeyCode::Char('q') => return Some(vec![]),
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
             return Some(vec![])
+        }
+        KeyCode::Char('c') => {
+            if app.selected.is_empty() {
+                *message = "No files or directories selected!".to_string();
+            } else {
+                return Some(app.collect_selected_paths());
+            }
+        }
+        KeyCode::Char(' ') => {
+            if app.git_panel_focused {
+                app.toggle_git_commit_selection();
+            } else {
+                app.toggle_git_file_selection();
+            }
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.git_panel_focused {

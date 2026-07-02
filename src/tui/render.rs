@@ -113,7 +113,7 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
-
+    let hash_style = Style::default().fg(theme::HASH).add_modifier(Modifier::BOLD);
     let commit_items: Vec<ListItem> = app
         .git_commits
         .iter()
@@ -121,21 +121,36 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
         .skip(app.git_commit_scroll_offset)
         .take(list_height)
         .map(|(i, commit)| {
-            let style = if i == app.git_commit_cursor {
+            let is_cursor = i == app.git_commit_cursor;
+            let base_style = if is_cursor {
                 Style::default().bg(theme::CURSOR_BG).fg(theme::FG)
             } else {
                 Style::default().fg(theme::FG)
             };
-            ListItem::new(Line::from(vec![Span::styled(
-                commit.display.clone(),
-                style,
-            )]))
+            let mut h_style = hash_style;
+            if is_cursor {
+                h_style = h_style.bg(theme::CURSOR_BG);
+            }
+            let spans: Vec<Span<'static>> = if !commit.hash.is_empty() {
+                if let Some(pos) = commit.display.find(commit.hash.as_str()) {
+                    let before = commit.display[..pos].to_string();
+                    let after = commit.display[pos + commit.hash.len()..].to_string();
+                    vec![
+                        Span::styled(before, base_style),
+                        Span::styled(commit.hash.clone(), h_style),
+                        Span::styled(after, base_style),
+                    ]
+                } else {
+                    vec![Span::styled(commit.display.clone(), base_style)]
+                }
+            } else {
+                vec![Span::styled(commit.display.clone(), base_style)]
+            };
+            ListItem::new(Line::from(spans))
         })
         .collect();
-
     let commit_list = List::new(commit_items).block(panel("Commits", app.git_panel_focused));
     f.render_widget(commit_list, chunks[0]);
-
     let file_items: Vec<ListItem> = app
         .git_files
         .iter()
@@ -143,18 +158,26 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
         .skip(app.git_files_scroll_offset)
         .take(list_height)
         .map(|(i, file)| {
-            let style = if i == app.git_files_cursor {
+            let is_cursor = i == app.git_files_cursor;
+            let style = if is_cursor {
                 Style::default().bg(theme::CURSOR_BG).fg(theme::FG)
             } else {
                 Style::default().fg(theme::FG)
             };
-            ListItem::new(Line::from(vec![Span::styled(
-                file.clone(),
-                style,
-            )]))
+            let is_selected = app.is_git_file_selected(file);
+            let marker = if is_selected { "✓ " } else { "  " };
+            let line = Line::from(vec![
+                Span::styled(
+                    marker,
+                    Style::default()
+                        .fg(theme::SELECTED)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(file.clone(), style),
+            ]);
+            ListItem::new(line)
         })
         .collect();
-
     let file_list = List::new(file_items).block(panel("Files", !app.git_panel_focused));
     f.render_widget(file_list, chunks[1]);
 }

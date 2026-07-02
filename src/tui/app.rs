@@ -355,6 +355,44 @@ impl AppState {
         self.git_files_cursor = 0;
     }
 
+    fn git_file_abs_path(&self, file: &str) -> PathBuf {
+        env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(file)
+    }
+    pub fn is_git_file_selected(&self, file: &str) -> bool {
+        self.selected.contains(&self.git_file_abs_path(file))
+    }
+    pub fn toggle_git_file_selection(&mut self) {
+        if let Some(file) = self.git_files.get(self.git_files_cursor).cloned() {
+            let path = self.git_file_abs_path(&file);
+            self.invalidate_caches();
+            if !self.selected.remove(&path) {
+                self.selected.insert(path);
+            }
+        }
+    }
+    pub fn toggle_git_commit_selection(&mut self) {
+        if self.git_files.is_empty() {
+            return;
+        }
+        let paths: Vec<PathBuf> = self
+            .git_files
+            .iter()
+            .map(|f| self.git_file_abs_path(f))
+            .collect();
+        let all_selected = paths.iter().all(|p| self.selected.contains(p));
+        self.invalidate_caches();
+        if all_selected {
+            for p in paths {
+                self.selected.remove(&p);
+            }
+        } else {
+            for p in paths {
+                self.selected.insert(p);
+            }
+        }
+    }
     pub fn sync_git_scroll(&mut self, visible_height: usize) {
         if self.git_panel_focused {
             let len = self.git_commits.len();
