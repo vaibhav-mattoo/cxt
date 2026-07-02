@@ -345,6 +345,15 @@ fn main() -> Result<()> {
         }
 
         cw.finish()?;
+        let cwd = std::env::current_dir().ok();
+        for p in &paths {
+            let display = cwd
+                .as_ref()
+                .and_then(|c| std::path::Path::new(p).strip_prefix(c).ok())
+                .map(|rel| rel.display().to_string())
+                .unwrap_or_else(|| p.clone());
+            println!("  {display}");
+        }
         println!(
             "Copied {} tokens from {} files to clipboard.",
             token_counter::format_count(aggregator.token_count()),
