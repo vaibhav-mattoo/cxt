@@ -102,12 +102,14 @@ impl Args {
         if self.compress && self.write.is_none() {
             return Err("--compress requires --write to specify an output file".to_string());
         }
-        // multiple files in ignore path provided as arguments like "cxt target_dir src/* -i dir -i file" should be ignored
+        // Validate that glob patterns in -i are syntactically valid.
+        // Non-glob patterns are treated as gitignore-style name patterns (e.g. "target"
+        // matches any directory/file named "target" at any depth) and need not exist.
         for ignore_path in &self.ignore {
-            if !crate::content_aggregator::is_glob_pattern(ignore_path)
-                && !std::path::Path::new(ignore_path).exists()
-            {
-                return Err(format!("Ignore path does not exist: {ignore_path}"));
+            if crate::content_aggregator::is_glob_pattern(ignore_path) {
+                if let Err(e) = globset::Glob::new(ignore_path) {
+                    return Err(format!("Invalid ignore pattern '{ignore_path}': {e}"));
+                }
             }
         }
         // Validate --lang values and handle the special "help" value.

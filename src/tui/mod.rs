@@ -10,9 +10,39 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{io, io::Write, time::Duration};
+use std::{
+    collections::HashSet,
+    io, io::Write,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 
 use app::{AppMode, AppState};
+
+// ── Session-scoped last-selection cache ──────────────────────────────────────
+// No disk I/O; lives only as long as the process. A second TUI invocation in
+// the same session (e.g. after --tui is called again from the same shell) can
+// restore the previous pick.
+
+static LAST_SELECTION: OnceLock<Mutex<Option<HashSet<PathBuf>>>> = OnceLock::new();
+
+fn last_selection_store() -> &'static Mutex<Option<HashSet<PathBuf>>> {
+    LAST_SELECTION.get_or_init(|| Mutex::new(None))
+}
+
+pub(super) fn save_last_selection(paths: &HashSet<PathBuf>) {
+    if let Ok(mut guard) = last_selection_store().lock() {
+        *guard = Some(paths.clone());
+    }
+}
+
+pub(super) fn load_last_selection() -> Option<HashSet<PathBuf>> {
+    last_selection_store()
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+}
 
 pub struct TuiOutcome {
     pub paths: Vec<String>,
@@ -70,6 +100,11 @@ fn tui_main(
                     if let Some(paths) =
                         events::handle_key_event(&mut app, key_event, &mut message)
                     {
+                        // Persist non-empty selections for this session so the
+                        // user can restore them with `p` in the next invocation.
+                        if !app.selected.is_empty() {
+                            save_last_selection(&app.selected);
+                        }
                         return Ok(TuiOutcome {
                             paths,
                             relative: app.relative,

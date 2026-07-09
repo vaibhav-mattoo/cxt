@@ -1,9 +1,63 @@
 use anyhow::Result;
-use globset::{GlobSet, GlobSetBuilder};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use rayon::prelude::*;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+
+enum FileReadResult {
+    Content(Vec<u8>),
+    Binary,
+    LargeFile,
+    Notebook,
+    ReadError(String),
+}
+
+fn read_file_for_aggregation(path: &Path) -> FileReadResult {
+    if is_notebook(path) {
+        return FileReadResult::Notebook;
+    }
+    let file_size = match path.metadata() {
+        Ok(m) => m.len(),
+        Err(e) => {
+            return FileReadResult::ReadError(format!(
+                "Warning: Failed to read file '{}': {e}",
+                path.display()
+            ))
+        }
+    };
+    if file_size > MAX_EXACT_BYTES {
+        let mut file = match fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) => {
+                return FileReadResult::ReadError(format!(
+                    "Warning: Failed to open file '{}': {e}",
+                    path.display()
+                ))
+            }
+        };
+        let mut header = [0u8; 8192];
+        let n = file.read(&mut header).unwrap_or(0);
+        if is_binary_content(&header[..n]) {
+            return FileReadResult::Binary;
+        }
+        return FileReadResult::LargeFile;
+    }
+    match fs::read(path) {
+        Ok(bytes) => {
+            if is_binary_content(&bytes) {
+                FileReadResult::Binary
+            } else {
+                FileReadResult::Content(bytes)
+            }
+        }
+        Err(e) => FileReadResult::ReadError(format!(
+            "Warning: Failed to read file '{}': {e}",
+            path.display()
+        )),
+    }
+}
 
 fn is_notebook(path: &Path) -> bool {
     path.extension()
@@ -23,16 +77,14 @@ fn is_binary_content(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(8192)].contains(&0u8)
 }
 
-fn path_matches_glob(glob_set: &GlobSet, path: &Path) -> bool {
-    if glob_set.is_empty() {
-        return false;
+/// Compile a list of ignore patterns (gitignore syntax) against a base directory.
+/// Returns an Arc so it can be cloned cheaply into parallel walker closures.
+fn build_gitignore(patterns: &[String], base_dir: &Path) -> Arc<Gitignore> {
+    let mut builder = GitignoreBuilder::new(base_dir);
+    for pattern in patterns {
+        let _ = builder.add_line(None, pattern);
     }
-    if glob_set.is_match(path) {
-        return true;
-    }
-    path.file_name()
-        .map(|n| glob_set.is_match(n))
-        .unwrap_or(false)
+    Arc::new(builder.build().unwrap_or_else(|_| Gitignore::empty()))
 }
 
 pub struct ContentAggregator {
@@ -41,8 +93,8 @@ pub struct ContentAggregator {
     file_count: usize,
     token_count: usize,
     token_counter: crate::token_counter::TokenCounter,
-    ignore: Vec<PathBuf>,
-    ignore_globs: GlobSet,
+    /// Raw ignore patterns in gitignore syntax (e.g. "target", "*.o", "build/").
+    ignore_patterns: Vec<String>,
     sort: bool,
     /// Extensions to include. Empty means all files are allowed.
     allowed_extensions: std::collections::HashSet<String>,
@@ -57,47 +109,36 @@ impl ContentAggregator {
         sort: bool,
         allowed_extensions: std::collections::HashSet<String>,
     ) -> Self {
-        let mut exact_paths = Vec::new();
-        let mut glob_builder = GlobSetBuilder::new();
-        for s in ignore {
-            if is_glob_pattern(&s) {
-                match globset::Glob::new(&s) {
-                    Ok(g) => {
-                        glob_builder.add(g);
-                    }
-                    Err(e) => eprintln!("Warning: invalid glob pattern '{s}': {e}"),
-                }
-            } else {
-                exact_paths.push(PathBuf::from(s));
-            }
-        }
-        let ignore_globs = glob_builder.build().unwrap_or_else(|e| {
-            eprintln!("Warning: failed to build glob set: {e}");
-            GlobSetBuilder::new().build().unwrap()
-        });
         Self {
             formatter,
             include_hidden_in_dirs,
             file_count: 0,
             token_count: 0,
             token_counter: crate::token_counter::TokenCounter::new(),
-            ignore: exact_paths,
-            ignore_globs,
+            ignore_patterns: ignore,
             sort,
             allowed_extensions,
             skipped_binary: 0,
         }
     }
 
-    fn matches_ignore_glob(&self, path: &Path) -> bool {
-        path_matches_glob(&self.ignore_globs, path)
-    }
-
+    /// Returns true if `path` should be excluded based on the ignore patterns.
+    /// Patterns follow gitignore semantics: `target` matches any component named
+    /// "target", `*.o` matches by filename, `build/` matches only directories.
     fn is_ignored(&self, path: &Path) -> bool {
-        self.ignore
-            .iter()
-            .any(|p| path == p || path.starts_with(p))
-            || self.matches_ignore_glob(path)
+        if self.ignore_patterns.is_empty() {
+            return false;
+        }
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let gitignore = build_gitignore(&self.ignore_patterns, &cwd);
+        // Resolve to absolute so the gitignore root-stripping works correctly.
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            cwd.join(path)
+        };
+        let is_dir = path.is_dir();
+        gitignore.matched_path_or_any_parents(&abs, is_dir).is_ignore()
     }
 
     /// Returns true if `path` passes the extension filter.
@@ -294,8 +335,8 @@ impl ContentAggregator {
         Ok(())
     }
 
-    /// Walk `dir_path` in parallel, collect file paths, sort for determinism, then
-    /// stream each file through `aggregate_file_precanon`.
+    /// Walk `dir_path` in parallel, read file contents in parallel, sort for
+    /// determinism, then write each file sequentially to the output stream.
     fn aggregate_directory<W: Write>(&mut self, dir_path: &Path, writer: &mut W) -> Result<()> {
         use ignore::WalkBuilder;
 
@@ -305,8 +346,10 @@ impl ContentAggregator {
             .canonicalize()
             .unwrap_or_else(|_| dir_path.to_path_buf());
 
-        let ignore_list = self.ignore.clone();
-        let ignore_globs = self.ignore_globs.clone();
+        // Compile ignore patterns once, relative to the directory being walked.
+        // Using gitignore semantics: "target" matches any component named "target",
+        // "*.o" matches by filename, "/build" matches only at the root of canon_dir.
+        let gitignore = build_gitignore(&self.ignore_patterns, &canon_dir);
         let allowed_ext = self.allowed_extensions.clone();
         let (tx, rx) = mpsc::channel::<PathBuf>();
 
@@ -318,27 +361,25 @@ impl ContentAggregator {
 
         walker.run(|| {
             let tx = tx.clone();
-            let ignore_list = ignore_list.clone();
-            let ignore_globs = ignore_globs.clone();
+            let gitignore = Arc::clone(&gitignore);
             let allowed_ext = allowed_ext.clone();
             Box::new(move |result| {
                 use ignore::WalkState;
                 if let Ok(entry) = result {
                     let path = entry.path();
-                    let exact_ignored = ignore_list
-                        .iter()
-                        .any(|ig| path == ig || path.starts_with(ig));
-                    let path_ignored = exact_ignored || path_matches_glob(&ignore_globs, path);
-
                     let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-                    if is_dir {
-                        return if path_ignored {
-                            WalkState::Skip
+
+                    // matched() strips the canon_dir prefix internally, so relative
+                    // patterns like "target" correctly match absolute walker paths.
+                    if gitignore.matched(path, is_dir).is_ignore() {
+                        return if is_dir {
+                            WalkState::Skip // prune the entire subtree
                         } else {
                             WalkState::Continue
                         };
                     }
-                    if path_ignored {
+
+                    if is_dir {
                         return WalkState::Continue;
                     }
 
@@ -359,15 +400,66 @@ impl ContentAggregator {
         });
         drop(tx); // close the last sender so rx drains cleanly
 
+        let mut file_paths: Vec<PathBuf> = rx.into_iter().collect();
+
         if self.sort {
-            let mut file_paths: Vec<PathBuf> = rx.into_iter().collect();
-            file_paths.sort_unstable();
-            for path in file_paths {
-                self.aggregate_file_precanon(&path, writer)?;
-            }
-        } else {
-            for path in rx {
-                self.aggregate_file_precanon(&path, writer)?;
+            // Parallel sort for deterministic output ordering
+            file_paths.par_sort_unstable();
+        }
+
+        // Read file contents in parallel across all CPU cores, then write sequentially.
+        // This separates I/O (parallelisable) from the clipboard write stream (must be serial).
+        let read_results: Vec<(PathBuf, FileReadResult)> = file_paths
+            .into_par_iter()
+            .map(|path| {
+                let result = read_file_for_aggregation(&path);
+                (path, result)
+            })
+            .collect();
+
+        for (path, result) in read_results {
+            match result {
+                FileReadResult::Content(bytes) => {
+                    self.formatter.write_file_header(&path, writer)?;
+                    let text = String::from_utf8_lossy(&bytes);
+                    self.token_count += self.token_counter.count(&text);
+                    if let Err(e) = writer.write_all(&bytes) {
+                        eprintln!("Warning: Failed to write file '{}': {e}", path.display());
+                    }
+                    writer.write_all(self.formatter.file_footer().as_bytes())?;
+                    self.file_count += 1;
+                }
+                FileReadResult::Binary => {
+                    eprintln!("Warning: skipping binary file '{}'", path.display());
+                    self.skipped_binary += 1;
+                }
+                FileReadResult::LargeFile => {
+                    let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
+                    match fs::File::open(&path) {
+                        Ok(mut file) => {
+                            self.formatter.write_file_header(&path, writer)?;
+                            self.token_count +=
+                                crate::token_counter::estimate_from_bytes(file_size);
+                            if let Err(e) = std::io::copy(&mut file, writer) {
+                                eprintln!(
+                                    "Warning: Failed to copy file '{}': {e}",
+                                    path.display()
+                                );
+                            }
+                            writer.write_all(self.formatter.file_footer().as_bytes())?;
+                            self.file_count += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to open file '{}': {e}", path.display());
+                        }
+                    }
+                }
+                FileReadResult::Notebook => {
+                    self.aggregate_file_precanon(&path, writer)?;
+                }
+                FileReadResult::ReadError(msg) => {
+                    eprintln!("{msg}");
+                }
             }
         }
         Ok(())

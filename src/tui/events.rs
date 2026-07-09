@@ -43,6 +43,14 @@ fn handle_git_tree(
                 return Some(app.collect_selected_paths());
             }
         }
+        KeyCode::Char('p') => {
+            let added = app.restore_last_selection();
+            *message = if added > 0 {
+                format!("Restored last selection (+{added} file{}).", if added == 1 { "" } else { "s" })
+            } else {
+                "No previous selection in this session.".to_string()
+            };
+        }
         KeyCode::Char(' ') => {
             if app.git_panel_focused {
                 app.toggle_git_commit_mark();
@@ -157,6 +165,14 @@ fn handle_search_navigating(
         }
         KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
             app.go_up_root();
+        }
+        KeyCode::Char('p') => {
+            let added = app.restore_last_selection();
+            *message = if added > 0 {
+                format!("Restored last selection (+{added} file{}).", if added == 1 { "" } else { "s" })
+            } else {
+                "No previous selection in this session.".to_string()
+            };
         }
         _ => {}
     }
@@ -312,6 +328,14 @@ fn handle_normal(
             if app.no_path {
                 app.relative = false;
             }
+        }
+        KeyCode::Char('p') => {
+            let added = app.restore_last_selection();
+            *message = if added > 0 {
+                format!("Restored last selection (+{added} file{}).", if added == 1 { "" } else { "s" })
+            } else {
+                "No previous selection in this session.".to_string()
+            };
         }
         KeyCode::Tab => {
             app.enter_git_tree_mode();

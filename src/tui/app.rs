@@ -250,6 +250,23 @@ impl AppState {
             .collect()
     }
 
+    /// Merge the session's last selection into the current selection.
+    /// Returns the number of newly added paths (0 means nothing was cached).
+    pub fn restore_last_selection(&mut self) -> usize {
+        let Some(last) = super::load_last_selection() else {
+            return 0;
+        };
+        if last.is_empty() {
+            return 0;
+        }
+        self.invalidate_caches();
+        let before = self.selected.len();
+        for path in last {
+            self.selected.insert(path);
+        }
+        self.selected.len() - before
+    }
+
     pub fn selected_file_count(&mut self) -> usize {
         if let Some(cached) = self.selected_file_count_cache {
             return cached;
