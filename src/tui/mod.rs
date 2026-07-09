@@ -14,34 +14,42 @@ use std::{
     collections::HashSet,
     io, io::Write,
     path::PathBuf,
-    sync::{Mutex, OnceLock},
     time::Duration,
 };
 
 use app::{AppMode, AppState};
 
-// ── Session-scoped last-selection cache ──────────────────────────────────────
-// No disk I/O; lives only as long as the process. A second TUI invocation in
-// the same session (e.g. after --tui is called again from the same shell) can
-// restore the previous pick.
+// ── Cross-invocation last-selection cache ────────────────────────────────────
+// Stored in $XDG_RUNTIME_DIR (a per-user tmpfs, wiped on logout) so it
+// survives across cxt invocations in the same terminal session without leaving
+// any permanent file anywhere on the system.
+// Falls back to $TMPDIR / /tmp when XDG_RUNTIME_DIR is not set.
 
-static LAST_SELECTION: OnceLock<Mutex<Option<HashSet<PathBuf>>>> = OnceLock::new();
-
-fn last_selection_store() -> &'static Mutex<Option<HashSet<PathBuf>>> {
-    LAST_SELECTION.get_or_init(|| Mutex::new(None))
+fn last_selection_path() -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("TMPDIR").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    dir.join("cxt_last_selection")
 }
 
 pub(super) fn save_last_selection(paths: &HashSet<PathBuf>) {
-    if let Ok(mut guard) = last_selection_store().lock() {
-        *guard = Some(paths.clone());
-    }
+    let content: String = paths
+        .iter()
+        .filter_map(|p| p.to_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = std::fs::write(last_selection_path(), content);
 }
 
 pub(super) fn load_last_selection() -> Option<HashSet<PathBuf>> {
-    last_selection_store()
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
+    let content = std::fs::read_to_string(last_selection_path()).ok()?;
+    let paths: HashSet<PathBuf> = content
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    if paths.is_empty() { None } else { Some(paths) }
 }
 
 pub struct TuiOutcome {
