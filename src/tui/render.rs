@@ -10,14 +10,14 @@ use ratatui::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
+    env,
     path::PathBuf,
 };
 use pathdiff::diff_paths;
 use tui_tree_widget::{Tree, TreeItem};
 
 use super::theme;
-use crate::tui::app::{AppMode, AppState};
+use crate::tui::app::{AppMode, AppState, DirItem};
 
 fn panel(title: &str, focused: bool) -> Block<'static> {
     Block::default()
@@ -38,7 +38,7 @@ fn panel(title: &str, focused: bool) -> Block<'static> {
 }
 
 /// Render the full TUI frame and return the inner file-list height in rows.
-pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize) -> u16 {
+pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize, loc_count: u64) -> u16 {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -48,23 +48,23 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize)
             Constraint::Length(1),
         ])
         .split(f.area());
-
     let inner_list_height = chunks[1].height.saturating_sub(2);
     app.list_area = Some(chunks[1]);
-
     render_path_bar(f, app, chunks[0]);
-    render_file_list(f, app, chunks[1], inner_list_height as usize);
-    render_status_bar(f, chunks[2], message, file_count);
-
+    if app.mode == AppMode::GitTree {
+        render_git_tree(f, app, chunks[1], inner_list_height as usize);
+    } else {
+        render_file_list(f, app, chunks[1], inner_list_height as usize);
+    }
+    render_status_bar(f, chunks[2], message, file_count, loc_count);
     if app.show_help {
         render_help_overlay(f, f.area());
     }
-
     inner_list_height
 }
 
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
-    let (path, title_str, path_style) = if app.mode != AppMode::Normal {
+    let (path, title_str, path_style) = if app.mode != AppMode::Normal && app.mode != AppMode::GitTree {
         let search_display = format!("Search: {}", app.search_query);
         let title = if app.mode == AppMode::SearchFocused {
             "Enter to search, Esc to leave search".to_string()
@@ -106,6 +106,88 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
         .style(path_style)
         .wrap(Wrap { trim: true });
     f.render_widget(path_widget, area);
+}
+
+fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let hash_style = Style::default().fg(theme::HASH).add_modifier(Modifier::BOLD);
+    let commit_items: Vec<ListItem> = app
+        .git_commits
+        .iter()
+        .enumerate()
+        .skip(app.git_commit_scroll_offset)
+        .take(list_height)
+        .map(|(i, commit)| {
+            let is_cursor = i == app.git_commit_cursor;
+            let line_style = if is_cursor {
+                Style::default().bg(theme::CURSOR_BG)
+            } else {
+                Style::default()
+            };
+            let fg_style = Style::default().fg(theme::FG);
+            let mut h_style = hash_style;
+            if is_cursor {
+                h_style = h_style.bg(theme::CURSOR_BG);
+            }
+            let marker_style = Style::default()
+                .fg(theme::SELECTED)
+                .add_modifier(Modifier::BOLD);
+            let marker = if app.is_git_commit_marked(&commit.hash) {
+                "✓ "
+            } else {
+                "  "
+            };
+            let mut spans: Vec<Span<'static>> = vec![Span::styled(marker, marker_style)];
+            if !commit.hash.is_empty() {
+                if let Some(pos) = commit.display.find(commit.hash.as_str()) {
+                    let before = commit.display[..pos].to_string();
+                    let after = commit.display[pos + commit.hash.len()..].to_string();
+                    spans.push(Span::styled(before, fg_style));
+                    spans.push(Span::styled(commit.hash.clone(), h_style));
+                    spans.push(Span::styled(after, fg_style));
+                } else {
+                    spans.push(Span::styled(commit.display.clone(), fg_style));
+                }
+            } else {
+                spans.push(Span::styled(commit.display.clone(), fg_style));
+            }
+            ListItem::new(Line::from(spans)).style(line_style)
+        })
+        .collect();
+    let commit_list = List::new(commit_items).block(panel("Commits", app.git_panel_focused));
+    f.render_widget(commit_list, chunks[0]);
+    let file_items: Vec<ListItem> = app
+        .git_files
+        .iter()
+        .enumerate()
+        .skip(app.git_files_scroll_offset)
+        .take(list_height)
+        .map(|(i, file)| {
+            let is_cursor = i == app.git_files_cursor;
+            let line_style = if is_cursor {
+                Style::default().bg(theme::CURSOR_BG)
+            } else {
+                Style::default()
+            };
+            let is_selected = app.is_git_file_selected(file);
+            let marker = if is_selected { "✓ " } else { "  " };
+            let line = Line::from(vec![
+                Span::styled(
+                    marker,
+                    Style::default()
+                        .fg(theme::SELECTED)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(file.clone(), Style::default().fg(theme::FG)),
+            ]);
+            ListItem::new(line).style(line_style)
+        })
+        .collect();
+    let file_list = List::new(file_items).block(panel("Files", !app.git_panel_focused));
+    f.render_widget(file_list, chunks[1]);
 }
 
 fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
@@ -214,7 +296,7 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
-fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize) {
+fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64) {
     let hint_str = "space select   c copy   ? help   q quit ";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -223,11 +305,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize
             Constraint::Length(hint_str.len() as u16),
         ])
         .split(area);
-
     if message.is_empty() {
         let left = Line::from(vec![Span::styled(
             format!(
-                " {file_count} file{} selected",
+                " {file_count} file{} selected | {loc_count} LOC",
                 if file_count == 1 { "" } else { "s" }
             ),
             Style::default().fg(theme::SELECTED),
@@ -308,6 +389,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Backspace", "Parent dir"),
         ("Space", "Select/Unselect"),
         ("/ or Ctrl-f", "Search files"),
+        ("Tab", "Toggle git tree"),
         ("?", "Toggle help"),
         ("c", "Confirm"),
         ("q/Ctrl-c", "Quit"),
@@ -337,7 +419,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
 /// (top-level entries plus all recursively opened subdirectories).
 fn collect_visible_dirs(
     dir: &PathBuf,
-    dir_cache: &HashMap<PathBuf, Vec<fs::DirEntry>>,
+    dir_cache: &HashMap<PathBuf, Vec<DirItem>>,
     open: &HashSet<Vec<PathBuf>>,
 ) -> Vec<PathBuf> {
     let Some(entries) = dir_cache.get(dir) else {
@@ -346,7 +428,7 @@ fn collect_visible_dirs(
     let mut result = Vec::new();
     for entry in entries {
         let path = entry.path();
-        if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+        if entry.is_dir() {
             result.push(path.clone());
             let is_open = open.iter().any(|kp| kp.last() == Some(&path));
             if is_open {
@@ -401,7 +483,7 @@ fn highlight_matches(
 /// Closed directories with cached entries include flat stubs so the ▶ symbol shows.
 fn build_styled_tree_items(
     dir: &PathBuf,
-    dir_cache: &HashMap<PathBuf, Vec<fs::DirEntry>>,
+    dir_cache: &HashMap<PathBuf, Vec<DirItem>>,
     open: &HashSet<Vec<PathBuf>>,
     selected: &HashSet<PathBuf>,
     fully_selected_dirs: &HashSet<PathBuf>,
@@ -415,7 +497,7 @@ fn build_styled_tree_items(
         .iter()
         .filter_map(|entry| {
             let path = entry.path();
-            let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
+            let is_dir = entry.is_dir();
             let raw_name = entry.file_name().to_string_lossy().to_string();
             let display_name = if is_dir {
                 format!("{}/", raw_name)

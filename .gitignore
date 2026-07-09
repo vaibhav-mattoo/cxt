@@ -13,6 +13,8 @@ target/
 # IDE files
 .vscode/
 .idea/
+.git/
+.github/
 *.swp
 *.swo
 
