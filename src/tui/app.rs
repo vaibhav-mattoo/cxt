@@ -96,6 +96,7 @@ pub struct AppState {
     pub show_git_diff: bool,
     pub git_diff_content: String,
     pub git_diff_scroll_offset: usize,
+    pub git_diff_cursor: usize,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
@@ -143,6 +144,7 @@ impl AppState {
             show_git_diff: false,
             git_diff_content: String::new(),
             git_diff_scroll_offset: 0,
+            git_diff_cursor: 0,
             dir_select_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
@@ -359,6 +361,7 @@ impl AppState {
         self.git_diff_cache.clear();
         self.show_git_diff = false;
         self.git_diff_scroll_offset = 0;
+        self.git_diff_cursor = 0;
         self.fetch_git_files();
         self.mode = AppMode::GitTree;
     }
@@ -481,6 +484,31 @@ impl AppState {
             }
         }
         self.selected = merged;
+    }
+    /// Move the diff cursor within the loaded diff content, scrolling the
+    /// viewport only when the cursor would leave it (mirrors sync_git_scroll).
+    pub fn sync_git_diff_scroll(&mut self, visible_height: usize) {
+        let len = self.git_diff_content.lines().count();
+        if len == 0 {
+            self.git_diff_cursor = 0;
+            self.git_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_diff_cursor >= len {
+            self.git_diff_cursor = len - 1;
+        }
+        if len <= visible_height {
+            self.git_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_diff_cursor < self.git_diff_scroll_offset {
+            self.git_diff_scroll_offset = self.git_diff_cursor;
+        } else if self.git_diff_cursor >= self.git_diff_scroll_offset + visible_height {
+            self.git_diff_scroll_offset = self.git_diff_cursor + 1 - visible_height;
+        }
+        self.git_diff_scroll_offset = self
+            .git_diff_scroll_offset
+            .min(len.saturating_sub(visible_height));
     }
     pub fn sync_git_scroll(&mut self, visible_height: usize) {
         if self.git_panel_focused {

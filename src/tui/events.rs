@@ -63,6 +63,7 @@ fn handle_git_tree(
             if app.show_git_diff {
                 app.fetch_git_diff();
                 app.git_diff_scroll_offset = 0;
+                app.git_diff_cursor = 0;
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
@@ -73,11 +74,12 @@ fn handle_git_tree(
                     if app.show_git_diff {
                         app.fetch_git_diff();
                         app.git_diff_scroll_offset = 0;
+                        app.git_diff_cursor = 0;
                     }
                 }
             } else if app.show_git_diff {
-                if app.git_diff_scroll_offset > 0 {
-                    app.git_diff_scroll_offset -= 1;
+                if app.git_diff_cursor > 0 {
+                    app.git_diff_cursor -= 1;
                 }
             } else if app.git_files_cursor > 0 {
                 app.git_files_cursor -= 1;
@@ -91,10 +93,14 @@ fn handle_git_tree(
                     if app.show_git_diff {
                         app.fetch_git_diff();
                         app.git_diff_scroll_offset = 0;
+                        app.git_diff_cursor = 0;
                     }
                 }
             } else if app.show_git_diff {
-                app.git_diff_scroll_offset += 1;
+                let len = app.git_diff_content.lines().count();
+                if app.git_diff_cursor + 1 < len {
+                    app.git_diff_cursor += 1;
+                }
             } else if app.git_files_cursor + 1 < app.git_files.len() {
                 app.git_files_cursor += 1;
             }

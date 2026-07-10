@@ -169,10 +169,27 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
     let commit_list = List::new(commit_items).block(panel("Commits", app.git_panel_focused));
     f.render_widget(commit_list, chunks[0]);
     if app.show_git_diff {
-        let diff_widget = Paragraph::new(build_diff_lines(&app.git_diff_content))
-            .block(panel("Diff", !app.git_panel_focused))
-            .scroll((app.git_diff_scroll_offset as u16, 0))
-            .wrap(Wrap { trim: false });
+        app.sync_git_diff_scroll(list_height);
+        let diff_title = app
+            .git_files
+            .get(app.git_files_cursor)
+            .cloned()
+            .unwrap_or_default();
+        let cursor_line = if app.git_panel_focused {
+            None
+        } else {
+            Some(app.git_diff_cursor)
+        };
+        let diff_block = panel(&format!("Diff: {diff_title}"), !app.git_panel_focused);
+        let diff_inner_width = diff_block.inner(chunks[1]).width;
+        let diff_widget = Paragraph::new(build_diff_lines(
+            &app.git_diff_content,
+            cursor_line,
+            diff_inner_width,
+        ))
+        .block(diff_block)
+        .scroll((app.git_diff_scroll_offset as u16, 0))
+        .wrap(Wrap { trim: false });
         f.render_widget(diff_widget, chunks[1]);
     } else {
         let file_items: Vec<ListItem> = app
@@ -183,10 +200,10 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
             .take(list_height)
             .map(|(i, file)| {
                 let is_cursor = i == app.git_files_cursor;
-                let style = if is_cursor {
-                    Style::default().bg(theme::CURSOR_BG).fg(theme::FG)
+                let row_style = if is_cursor {
+                    Style::default().bg(theme::CURSOR_BG)
                 } else {
-                    Style::default().fg(theme::FG)
+                    Style::default()
                 };
                 let is_selected = app.is_git_file_selected(file);
                 let marker = if is_selected { "✓ " } else { "  " };
@@ -197,9 +214,9 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
                             .fg(theme::SELECTED)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(file.clone(), style),
+                    Span::styled(file.clone(), Style::default().fg(theme::FG)),
                 ]);
-                ListItem::new(line)
+                ListItem::new(line).style(row_style)
             })
             .collect();
         let file_list = List::new(file_items).block(panel("Files", !app.git_panel_focused));
@@ -209,11 +226,12 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
 
 /// Style diff lines: additions green, deletions red, hunk headers highlighted,
 /// file headers (+++/---) muted.
-fn build_diff_lines(content: &str) -> Vec<Line<'static>> {
+fn build_diff_lines(content: &str, cursor_line: Option<usize>, width: u16) -> Vec<Line<'static>> {
     content
         .lines()
-        .map(|line| {
-            let style = if line.starts_with("+++") || line.starts_with("---") {
+        .enumerate()
+        .map(|(i, line)| {
+            let mut style = if line.starts_with("+++") || line.starts_with("---") {
                 Style::default()
                     .fg(theme::MUTED)
                     .add_modifier(Modifier::BOLD)
@@ -228,7 +246,15 @@ fn build_diff_lines(content: &str) -> Vec<Line<'static>> {
             } else {
                 Style::default().fg(theme::FG)
             };
-            Line::from(Span::styled(line.to_string(), style))
+            let is_cursor = cursor_line == Some(i);
+            let text = if is_cursor {
+                style = style.bg(theme::CURSOR_BG);
+                let pad_width = width.max(line.chars().count() as u16) as usize;
+                format!("{:<pad_width$}", line)
+            } else {
+                line.to_string()
+            };
+            Line::from(Span::styled(text, style))
         })
         .collect()
 }
