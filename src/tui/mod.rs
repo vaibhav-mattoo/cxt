@@ -14,7 +14,6 @@ use std::{
     collections::HashSet,
     io, io::Write,
     path::PathBuf,
-    time::Duration,
 };
 
 use app::{AppMode, AppState};
@@ -83,48 +82,55 @@ fn tui_main(
 ) -> Result<TuiOutcome> {
     let mut app = AppState::new(relative, no_path).context("Failed to read current directory")?;
     let mut message = String::new();
+    let mut needs_redraw = true;
+    let mut rendered_height: u16 = 0;
 
     loop {
-        // Search mode manages its own cursor scrolling; tree widget self-manages.
-        if app.mode != AppMode::Normal {
-            if app.mode == AppMode::GitTree {
-                app.sync_git_scroll(app.visible_height);
-            } else {
-                app.sync_search_scroll(app.visible_height);
+        if needs_redraw {
+            // Search mode manages its own cursor scrolling; tree widget self-manages.
+            if app.mode != AppMode::Normal {
+                if app.mode == AppMode::GitTree {
+                    app.sync_git_scroll(app.visible_height);
+                } else {
+                    app.sync_search_scroll(app.visible_height);
+                }
             }
+            let file_count = app.selected_file_count();
+            let loc_count = app.selected_loc();
+            terminal.draw(|f| {
+                rendered_height = render::draw(f, &mut app, &message, file_count, loc_count);
+            })?;
+            app.visible_height = rendered_height as usize;
+            terminal.backend_mut().flush()?;
+            needs_redraw = false;
         }
-        let file_count = app.selected_file_count();
-        let loc_count = app.selected_loc();
-        let mut rendered_height: u16 = 0;
-        terminal.draw(|f| {
-            rendered_height = render::draw(f, &mut app, &message, file_count, loc_count);
-        })?;
-        app.visible_height = rendered_height as usize;
-        terminal.backend_mut().flush()?;
 
-        if event::poll(Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key_event) => {
-                    if let Some(paths) =
-                        events::handle_key_event(&mut app, key_event, &mut message)
-                    {
-                        // Persist non-empty selections for this session so the
-                        // user can restore them with `p` in the next invocation.
-                        if !app.selected.is_empty() {
-                            save_last_selection(&app.selected);
-                        }
-                        return Ok(TuiOutcome {
-                            paths,
-                            relative: app.relative,
-                            no_path: app.no_path,
-                        });
+        match event::read()? {
+            Event::Key(key_event) => {
+                if let Some(paths) =
+                    events::handle_key_event(&mut app, key_event, &mut message)
+                {
+                    // Persist non-empty selections for this session so the
+                    // user can restore them with `p` in the next invocation.
+                    if !app.selected.is_empty() {
+                        save_last_selection(&app.selected);
                     }
+                    return Ok(TuiOutcome {
+                        paths,
+                        relative: app.relative,
+                        no_path: app.no_path,
+                    });
                 }
-                Event::Mouse(mouse_event) => {
-                    events::handle_mouse_event(&mut app, mouse_event, &mut message);
-                }
-                _ => {}
+                needs_redraw = true;
             }
+            Event::Mouse(mouse_event) => {
+                events::handle_mouse_event(&mut app, mouse_event, &mut message);
+                needs_redraw = true;
+            }
+            Event::Resize(_, _) => {
+                needs_redraw = true;
+            }
+            _ => {}
         }
     }
 }

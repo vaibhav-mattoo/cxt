@@ -4,7 +4,6 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -30,14 +29,18 @@ pub struct GitCommit {
     pub hash: String,
 }
 
-/// Detect whether `dir` is inside a git work-tree.
+/// Detect whether `dir` is inside a git work-tree by walking up for a `.git` entry.
 fn is_git_repo(dir: &Path) -> bool {
-    std::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .current_dir(dir)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    let mut current = dir;
+    loop {
+        if current.join(".git").exists() {
+            return true;
+        }
+        match current.parent() {
+            Some(p) => current = p,
+            None => return false,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -91,7 +94,6 @@ pub struct AppState {
     git_base_selected: HashSet<PathBuf>,
     git_diff_cache: HashMap<String, Vec<String>>,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
-    dir_files_cache: RefCell<HashMap<PathBuf, Rc<Vec<PathBuf>>>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -100,20 +102,8 @@ impl AppState {
         let root_dir = env::current_dir()?;
         let respect_gitignore = is_git_repo(&root_dir);
         let mut dir_cache = HashMap::new();
-        let root_entries = read_dir_sorted(&root_dir, respect_gitignore)?;
-
-        // Eagerly load one level of subdirs so ▶ indicators appear immediately.
-        let subdirs: Vec<PathBuf> = root_entries
-            .iter()
-            .filter(|e| e.is_dir())
-            .map(|e| e.path())
-            .collect();
+        let root_entries = read_dir_sorted(&root_dir)?;
         dir_cache.insert(root_dir.clone(), root_entries);
-        for subdir in subdirs {
-            if let Ok(sub_entries) = read_dir_sorted(&subdir, respect_gitignore) {
-                dir_cache.insert(subdir, sub_entries);
-            }
-        }
 
         let mut app = Self {
             root_dir,
@@ -148,7 +138,6 @@ impl AppState {
             git_base_selected: HashSet::new(),
             git_diff_cache: HashMap::new(),
             dir_select_cache: RefCell::new(HashMap::new()),
-            dir_files_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -201,19 +190,11 @@ impl AppState {
         }
     }
 
-    fn files_under_cached(&self, dir: &Path) -> Rc<Vec<PathBuf>> {
-        if let Some(v) = self.dir_files_cache.borrow().get(dir) {
-            return Rc::clone(v);
-        }
-        let files = Rc::new(files_under(dir, self.respect_gitignore));
-        self.dir_files_cache
-            .borrow_mut()
-            .insert(dir.to_path_buf(), Rc::clone(&files));
-        files
-    }
-
     /// True iff dir has at least one descendant file and ALL are selected.
     /// Result is cached until the next selection change.
+    /// Uses dir_cache only — avoids any filesystem walk. Subdirs not yet loaded
+    /// in dir_cache are treated as "not fully selected" (safe: their files can't
+    /// have been selected without the user visiting them first).
     pub fn dir_fully_selected(&self, dir: &Path) -> bool {
         if self.selected.is_empty() {
             return false;
@@ -221,17 +202,28 @@ impl AppState {
         if let Some(v) = self.dir_select_cache.borrow().get(dir).copied() {
             return v;
         }
-        let has_selected_descendant = self.selected.iter().any(|s| s.starts_with(dir));
-        let result = if !has_selected_descendant {
-            false
-        } else {
-            let files = self.files_under_cached(dir);
-            !files.is_empty() && files.iter().all(|f| self.selected.contains(f))
-        };
+        let result = self.check_dir_fully_selected(dir);
         self.dir_select_cache
             .borrow_mut()
             .insert(dir.to_path_buf(), result);
         result
+    }
+
+    fn check_dir_fully_selected(&self, dir: &Path) -> bool {
+        let Some(entries) = self.dir_cache.get(dir) else {
+            return false;
+        };
+        if entries.is_empty() {
+            return false;
+        }
+        entries.iter().all(|entry| {
+            let path = entry.path();
+            if entry.is_dir() {
+                self.check_dir_fully_selected(&path)
+            } else {
+                self.selected.contains(&path)
+            }
+        })
     }
 
     /// Render-facing selection test that handles files and directories uniformly.
@@ -503,22 +495,10 @@ impl AppState {
         if self.dir_cache.contains_key(dir) {
             return;
         }
-        let Ok(entries) = read_dir_sorted(dir, self.respect_gitignore) else {
+        let Ok(entries) = read_dir_sorted(dir) else {
             return;
         };
-        let subdirs: Vec<PathBuf> = entries
-            .iter()
-            .filter(|e| e.is_dir())
-            .map(|e| e.path())
-            .collect();
         self.dir_cache.insert(dir.clone(), entries);
-        for subdir in subdirs {
-            if let std::collections::hash_map::Entry::Vacant(e) = self.dir_cache.entry(subdir) {
-                if let Ok(sub_entries) = read_dir_sorted(e.key(), self.respect_gitignore) {
-                    e.insert(sub_entries);
-                }
-            }
-        }
     }
 
     /// Change the tree root to the parent directory of root_dir.
@@ -707,24 +687,25 @@ pub fn files_under(dir: &Path, respect_gitignore: bool) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn read_dir_sorted(dir: &PathBuf, respect_gitignore: bool) -> io::Result<Vec<DirItem>> {
-    let mut entries: Vec<DirItem> = ignore::WalkBuilder::new(dir)
-        .max_depth(Some(1))
-        .hidden(false)
-        .git_ignore(respect_gitignore)
-        .follow_links(true)
-        .build()
+pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<DirItem>> {
+    let mut entries: Vec<DirItem> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.depth() > 0)
         .map(|e| {
-            let is_dir = e.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+            let path = e.path();
+            let ft = e.file_type().ok();
+            // Follow symlinks to determine if the target is a directory.
+            let is_dir = ft.map_or(false, |t| {
+                if t.is_symlink() { path.is_dir() } else { t.is_dir() }
+            });
             DirItem {
-                path: e.path().to_path_buf(),
-                file_name: e.file_name().to_os_string(),
+                file_name: e.file_name(),
                 is_dir,
+                path,
             }
         })
         .collect();
-    entries.sort_by_key(|e| (!e.is_dir(), e.file_name().to_os_string()));
+    entries.sort_unstable_by(|a, b| {
+        (!a.is_dir()).cmp(&(!b.is_dir())).then_with(|| a.file_name().cmp(b.file_name()))
+    });
     Ok(entries)
 }

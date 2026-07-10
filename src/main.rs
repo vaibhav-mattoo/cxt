@@ -61,6 +61,24 @@ fn dedup_paths(paths: Vec<String>) -> Vec<String> {
     paths.into_iter().filter(|p| seen.insert(p.clone())).collect()
 }
 
+/// Expand brace expressions in each string, e.g. `"src/{a,b}.rs"` → `["src/a.rs", "src/b.rs"]`.
+/// Strings without `{` are returned as-is. Invalid brace syntax is passed through unchanged.
+fn expand_braces(inputs: Vec<String>) -> Vec<String> {
+    inputs
+        .into_iter()
+        .flat_map(|s| {
+            if s.contains('{') {
+                match bracoxide::explode(&s) {
+                    Ok(expanded) => expanded,
+                    Err(_) => vec![s],
+                }
+            } else {
+                vec![s]
+            }
+        })
+        .collect()
+}
+
 fn eprintln_binary_skip_summary(aggregator: &ContentAggregator) {
     let n = aggregator.skipped_binary_count();
     if n > 0 {
@@ -248,6 +266,10 @@ fn main() -> Result<()> {
         args.paths.clone()
     };
 
+    // Expand brace expressions in paths, e.g. "src/{main,lib}.rs" → ["src/main.rs", "src/lib.rs"].
+    // TUI/stdin paths are already resolved, but brace-free strings pass through unchanged.
+    let paths = expand_braces(paths);
+
     // Detect image mode. Errors on mixed input or multiple images.
     if image_handler::check_image_mode(&paths)? {
         // Validate flag compatibility
@@ -276,7 +298,7 @@ fn main() -> Result<()> {
     let mut aggregator = ContentAggregator::new(
         fmt,
         args.hidden,
-        args.ignore.clone().into_iter().collect::<Vec<_>>(),
+        expand_braces(args.ignore.clone()),
         !args.no_sort,
         allowed_extensions,
     );
