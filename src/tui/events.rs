@@ -58,11 +58,26 @@ fn handle_git_tree(
                 app.toggle_git_file_selection();
             }
         }
+        KeyCode::Char('d') => {
+            app.show_git_diff = !app.show_git_diff;
+            if app.show_git_diff {
+                app.fetch_git_diff();
+                app.git_diff_scroll_offset = 0;
+            }
+        }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.git_panel_focused {
                 if app.git_commit_cursor > 0 {
                     app.git_commit_cursor -= 1;
                     app.fetch_git_files();
+                    if app.show_git_diff {
+                        app.fetch_git_diff();
+                        app.git_diff_scroll_offset = 0;
+                    }
+                }
+            } else if app.show_git_diff {
+                if app.git_diff_scroll_offset > 0 {
+                    app.git_diff_scroll_offset -= 1;
                 }
             } else if app.git_files_cursor > 0 {
                 app.git_files_cursor -= 1;
@@ -73,7 +88,13 @@ fn handle_git_tree(
                 if app.git_commit_cursor + 1 < app.git_commits.len() {
                     app.git_commit_cursor += 1;
                     app.fetch_git_files();
+                    if app.show_git_diff {
+                        app.fetch_git_diff();
+                        app.git_diff_scroll_offset = 0;
+                    }
                 }
+            } else if app.show_git_diff {
+                app.git_diff_scroll_offset += 1;
             } else if app.git_files_cursor + 1 < app.git_files.len() {
                 app.git_files_cursor += 1;
             }

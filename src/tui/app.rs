@@ -93,6 +93,9 @@ pub struct AppState {
     pub git_marked_commits: HashSet<String>,
     git_base_selected: HashSet<PathBuf>,
     git_diff_cache: HashMap<String, Vec<String>>,
+    pub show_git_diff: bool,
+    pub git_diff_content: String,
+    pub git_diff_scroll_offset: usize,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
@@ -137,6 +140,9 @@ impl AppState {
             git_marked_commits: HashSet::new(),
             git_base_selected: HashSet::new(),
             git_diff_cache: HashMap::new(),
+            show_git_diff: false,
+            git_diff_content: String::new(),
+            git_diff_scroll_offset: 0,
             dir_select_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
@@ -351,6 +357,8 @@ impl AppState {
         self.git_marked_commits.clear();
         self.git_base_selected = self.selected.clone();
         self.git_diff_cache.clear();
+        self.show_git_diff = false;
+        self.git_diff_scroll_offset = 0;
         self.fetch_git_files();
         self.mode = AppMode::GitTree;
     }
@@ -399,6 +407,32 @@ impl AppState {
         env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(file)
+    }
+    pub fn fetch_git_diff(&mut self) {
+        let hash = self
+            .git_commits
+            .get(self.git_commit_cursor)
+            .map(|c| c.hash.clone())
+            .unwrap_or_default();
+        let file = self
+            .git_files
+            .get(self.git_files_cursor)
+            .cloned()
+            .unwrap_or_default();
+
+        if hash.is_empty() || file.is_empty() {
+            self.git_diff_content.clear();
+            return;
+        }
+
+        let output = std::process::Command::new("git")
+            .args(["diff-tree", "--no-commit-id", "-p", "--root", &hash, "--", &file])
+            .output();
+
+        self.git_diff_content = match output {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => "Failed to load diff.".to_string(),
+        };
     }
     pub fn is_git_file_selected(&self, file: &str) -> bool {
         self.selected.contains(&self.git_file_abs_path(file))
