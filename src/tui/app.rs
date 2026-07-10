@@ -106,7 +106,7 @@ impl AppState {
         let root_dir = env::current_dir()?;
         let respect_gitignore = is_git_repo(&root_dir);
         let mut dir_cache = HashMap::new();
-        let root_entries = read_dir_sorted(&root_dir)?;
+        let root_entries = read_dir_sorted(&root_dir, respect_gitignore)?;
         dir_cache.insert(root_dir.clone(), root_entries);
 
         let mut app = Self {
@@ -557,7 +557,7 @@ impl AppState {
         if self.dir_cache.contains_key(dir) {
             return;
         }
-        let Ok(entries) = read_dir_sorted(dir) else {
+        let Ok(entries) = read_dir_sorted(dir, self.respect_gitignore) else {
             return;
         };
         self.dir_cache.insert(dir.clone(), entries);
@@ -749,20 +749,21 @@ pub fn files_under(dir: &Path, respect_gitignore: bool) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<DirItem>> {
-    let mut entries: Vec<DirItem> = std::fs::read_dir(dir)?
+pub fn read_dir_sorted(dir: &PathBuf, respect_gitignore: bool) -> io::Result<Vec<DirItem>> {
+    let mut entries: Vec<DirItem> = ignore::WalkBuilder::new(dir)
+        .max_depth(Some(1))
+        .hidden(false)
+        .git_ignore(respect_gitignore)
+        .follow_links(true)
+        .build()
         .filter_map(|e| e.ok())
+        .filter(|e| e.depth() > 0)
         .map(|e| {
-            let path = e.path();
-            let ft = e.file_type().ok();
-            // Follow symlinks to determine if the target is a directory.
-            let is_dir = ft.map_or(false, |t| {
-                if t.is_symlink() { path.is_dir() } else { t.is_dir() }
-            });
+            let is_dir = e.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
             DirItem {
-                file_name: e.file_name(),
+                path: e.path().to_path_buf(),
+                file_name: e.file_name().to_os_string(),
                 is_dir,
-                path,
             }
         })
         .collect();
