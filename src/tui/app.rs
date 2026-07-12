@@ -93,6 +93,10 @@ pub struct AppState {
     pub git_marked_commits: HashSet<String>,
     git_base_selected: HashSet<PathBuf>,
     git_diff_cache: HashMap<String, Vec<String>>,
+    pub show_git_diff: bool,
+    pub git_diff_content: String,
+    pub git_diff_scroll_offset: usize,
+    pub git_diff_cursor: usize,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
@@ -102,7 +106,7 @@ impl AppState {
         let root_dir = env::current_dir()?;
         let respect_gitignore = is_git_repo(&root_dir);
         let mut dir_cache = HashMap::new();
-        let root_entries = read_dir_sorted(&root_dir)?;
+        let root_entries = read_dir_sorted(&root_dir, respect_gitignore)?;
         dir_cache.insert(root_dir.clone(), root_entries);
 
         let mut app = Self {
@@ -137,6 +141,10 @@ impl AppState {
             git_marked_commits: HashSet::new(),
             git_base_selected: HashSet::new(),
             git_diff_cache: HashMap::new(),
+            show_git_diff: false,
+            git_diff_content: String::new(),
+            git_diff_scroll_offset: 0,
+            git_diff_cursor: 0,
             dir_select_cache: RefCell::new(HashMap::new()),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
@@ -351,6 +359,9 @@ impl AppState {
         self.git_marked_commits.clear();
         self.git_base_selected = self.selected.clone();
         self.git_diff_cache.clear();
+        self.show_git_diff = false;
+        self.git_diff_scroll_offset = 0;
+        self.git_diff_cursor = 0;
         self.fetch_git_files();
         self.mode = AppMode::GitTree;
     }
@@ -400,6 +411,32 @@ impl AppState {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(file)
     }
+    pub fn fetch_git_diff(&mut self) {
+        let hash = self
+            .git_commits
+            .get(self.git_commit_cursor)
+            .map(|c| c.hash.clone())
+            .unwrap_or_default();
+        let file = self
+            .git_files
+            .get(self.git_files_cursor)
+            .cloned()
+            .unwrap_or_default();
+
+        if hash.is_empty() || file.is_empty() {
+            self.git_diff_content.clear();
+            return;
+        }
+
+        let output = std::process::Command::new("git")
+            .args(["diff-tree", "--no-commit-id", "-p", "--root", &hash, "--", &file])
+            .output();
+
+        self.git_diff_content = match output {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => "Failed to load diff.".to_string(),
+        };
+    }
     pub fn is_git_file_selected(&self, file: &str) -> bool {
         self.selected.contains(&self.git_file_abs_path(file))
     }
@@ -448,6 +485,31 @@ impl AppState {
         }
         self.selected = merged;
     }
+    /// Move the diff cursor within the loaded diff content, scrolling the
+    /// viewport only when the cursor would leave it (mirrors sync_git_scroll).
+    pub fn sync_git_diff_scroll(&mut self, visible_height: usize) {
+        let len = self.git_diff_content.lines().count();
+        if len == 0 {
+            self.git_diff_cursor = 0;
+            self.git_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_diff_cursor >= len {
+            self.git_diff_cursor = len - 1;
+        }
+        if len <= visible_height {
+            self.git_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_diff_cursor < self.git_diff_scroll_offset {
+            self.git_diff_scroll_offset = self.git_diff_cursor;
+        } else if self.git_diff_cursor >= self.git_diff_scroll_offset + visible_height {
+            self.git_diff_scroll_offset = self.git_diff_cursor + 1 - visible_height;
+        }
+        self.git_diff_scroll_offset = self
+            .git_diff_scroll_offset
+            .min(len.saturating_sub(visible_height));
+    }
     pub fn sync_git_scroll(&mut self, visible_height: usize) {
         if self.git_panel_focused {
             let len = self.git_commits.len();
@@ -495,7 +557,7 @@ impl AppState {
         if self.dir_cache.contains_key(dir) {
             return;
         }
-        let Ok(entries) = read_dir_sorted(dir) else {
+        let Ok(entries) = read_dir_sorted(dir, self.respect_gitignore) else {
             return;
         };
         self.dir_cache.insert(dir.clone(), entries);
@@ -687,20 +749,21 @@ pub fn files_under(dir: &Path, respect_gitignore: bool) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn read_dir_sorted(dir: &PathBuf) -> io::Result<Vec<DirItem>> {
-    let mut entries: Vec<DirItem> = std::fs::read_dir(dir)?
+pub fn read_dir_sorted(dir: &PathBuf, respect_gitignore: bool) -> io::Result<Vec<DirItem>> {
+    let mut entries: Vec<DirItem> = ignore::WalkBuilder::new(dir)
+        .max_depth(Some(1))
+        .hidden(false)
+        .git_ignore(respect_gitignore)
+        .follow_links(true)
+        .build()
         .filter_map(|e| e.ok())
+        .filter(|e| e.depth() > 0)
         .map(|e| {
-            let path = e.path();
-            let ft = e.file_type().ok();
-            // Follow symlinks to determine if the target is a directory.
-            let is_dir = ft.map_or(false, |t| {
-                if t.is_symlink() { path.is_dir() } else { t.is_dir() }
-            });
+            let is_dir = e.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
             DirItem {
-                file_name: e.file_name(),
+                path: e.path().to_path_buf(),
+                file_name: e.file_name().to_os_string(),
                 is_dir,
-                path,
             }
         })
         .collect();

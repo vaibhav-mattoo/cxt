@@ -1,3 +1,4 @@
+use pathdiff::diff_paths;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -13,7 +14,6 @@ use std::{
     env,
     path::PathBuf,
 };
-use pathdiff::diff_paths;
 use tui_tree_widget::{Tree, TreeItem};
 
 use super::theme;
@@ -38,7 +38,13 @@ fn panel(title: &str, focused: bool) -> Block<'static> {
 }
 
 /// Render the full TUI frame and return the inner file-list height in rows.
-pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize, loc_count: u64) -> u16 {
+pub fn draw(
+    f: &mut Frame,
+    app: &mut AppState,
+    message: &str,
+    file_count: usize,
+    loc_count: u64,
+) -> u16 {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -56,7 +62,7 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize,
     } else {
         render_file_list(f, app, chunks[1], inner_list_height as usize);
     }
-    render_status_bar(f, chunks[2], message, file_count, loc_count);
+    render_status_bar(f, chunks[2], message, file_count, loc_count, app.mode == AppMode::GitTree);
     if app.show_help {
         render_help_overlay(f, f.area());
     }
@@ -64,42 +70,43 @@ pub fn draw(f: &mut Frame, app: &mut AppState, message: &str, file_count: usize,
 }
 
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
-    let (path, title_str, path_style) = if app.mode != AppMode::Normal && app.mode != AppMode::GitTree {
-        let search_display = format!("Search: {}", app.search_query);
-        let title = if app.mode == AppMode::SearchFocused {
-            "Enter to search, Esc to leave search".to_string()
+    let (path, title_str, path_style) =
+        if app.mode != AppMode::Normal && app.mode != AppMode::GitTree {
+            let search_display = format!("Search: {}", app.search_query);
+            let title = if app.mode == AppMode::SearchFocused {
+                "Enter to search, Esc to leave search".to_string()
+            } else {
+                "Esc to leave search".to_string()
+            };
+            let style = if app.mode == AppMode::SearchFocused {
+                Style::default()
+                    .fg(theme::MATCH)
+                    .bg(theme::CURSOR_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            (search_display, title, style)
         } else {
-            "Esc to leave search".to_string()
+            let path = if app.no_path {
+                "[No Path Headers]".to_string()
+            } else if app.relative {
+                let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                diff_paths(&app.root_dir, &cwd)
+                    .unwrap_or_else(|| app.root_dir.clone())
+                    .display()
+                    .to_string()
+            } else {
+                app.root_dir.display().to_string()
+            };
+            let mut title_str = "Current Directory".to_string();
+            if app.no_path {
+                title_str.push_str(" [n: no path]");
+            } else if app.relative {
+                title_str.push_str(" [r: relative]");
+            }
+            (path, title_str, Style::default())
         };
-        let style = if app.mode == AppMode::SearchFocused {
-            Style::default()
-                .fg(theme::MATCH)
-                .bg(theme::CURSOR_BG)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        (search_display, title, style)
-    } else {
-        let path = if app.no_path {
-            "[No Path Headers]".to_string()
-        } else if app.relative {
-            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            diff_paths(&app.root_dir, &cwd)
-                .unwrap_or_else(|| app.root_dir.clone())
-                .display()
-                .to_string()
-        } else {
-            app.root_dir.display().to_string()
-        };
-        let mut title_str = "Current Directory".to_string();
-        if app.no_path {
-            title_str.push_str(" [n: no path]");
-        } else if app.relative {
-            title_str.push_str(" [r: relative]");
-        }
-        (path, title_str, Style::default())
-    };
 
     let path_widget = Paragraph::new(path)
         .block(panel(&title_str, app.mode != AppMode::Normal))
@@ -113,7 +120,9 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
-    let hash_style = Style::default().fg(theme::HASH).add_modifier(Modifier::BOLD);
+    let hash_style = Style::default()
+        .fg(theme::HASH)
+        .add_modifier(Modifier::BOLD);
     let commit_items: Vec<ListItem> = app
         .git_commits
         .iter()
@@ -159,35 +168,95 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
         .collect();
     let commit_list = List::new(commit_items).block(panel("Commits", app.git_panel_focused));
     f.render_widget(commit_list, chunks[0]);
-    let file_items: Vec<ListItem> = app
-        .git_files
-        .iter()
-        .enumerate()
-        .skip(app.git_files_scroll_offset)
-        .take(list_height)
-        .map(|(i, file)| {
-            let is_cursor = i == app.git_files_cursor;
-            let line_style = if is_cursor {
-                Style::default().bg(theme::CURSOR_BG)
-            } else {
-                Style::default()
-            };
-            let is_selected = app.is_git_file_selected(file);
-            let marker = if is_selected { "✓ " } else { "  " };
-            let line = Line::from(vec![
-                Span::styled(
-                    marker,
+    if app.show_git_diff {
+        app.sync_git_diff_scroll(list_height);
+        let diff_title = app
+            .git_files
+            .get(app.git_files_cursor)
+            .cloned()
+            .unwrap_or_default();
+        let cursor_line = if app.git_panel_focused {
+            None
+        } else {
+            Some(app.git_diff_cursor)
+        };
+        let diff_block = panel(&format!("Diff: {diff_title}"), !app.git_panel_focused);
+        let diff_inner_width = diff_block.inner(chunks[1]).width;
+        let diff_widget = Paragraph::new(build_diff_lines(
+            &app.git_diff_content,
+            cursor_line,
+            diff_inner_width,
+        ))
+        .block(diff_block)
+        .scroll((app.git_diff_scroll_offset as u16, 0))
+        .wrap(Wrap { trim: false });
+        f.render_widget(diff_widget, chunks[1]);
+    } else {
+        let file_items: Vec<ListItem> = app
+            .git_files
+            .iter()
+            .enumerate()
+            .skip(app.git_files_scroll_offset)
+            .take(list_height)
+            .map(|(i, file)| {
+                let is_cursor = i == app.git_files_cursor;
+                let row_style = if is_cursor {
+                    Style::default().bg(theme::CURSOR_BG)
+                } else {
                     Style::default()
-                        .fg(theme::SELECTED)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(file.clone(), Style::default().fg(theme::FG)),
-            ]);
-            ListItem::new(line).style(line_style)
+                };
+                let is_selected = app.is_git_file_selected(file);
+                let marker = if is_selected { "✓ " } else { "  " };
+                let line = Line::from(vec![
+                    Span::styled(
+                        marker,
+                        Style::default()
+                            .fg(theme::SELECTED)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(file.clone(), Style::default().fg(theme::FG)),
+                ]);
+                ListItem::new(line).style(row_style)
+            })
+            .collect();
+        let file_list = List::new(file_items).block(panel("Files", !app.git_panel_focused));
+        f.render_widget(file_list, chunks[1]);
+    }
+}
+
+/// Style diff lines: additions green, deletions red, hunk headers highlighted,
+/// file headers (+++/---) muted.
+fn build_diff_lines(content: &str, cursor_line: Option<usize>, width: u16) -> Vec<Line<'static>> {
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let mut style = if line.starts_with("+++") || line.starts_with("---") {
+                Style::default()
+                    .fg(theme::MUTED)
+                    .add_modifier(Modifier::BOLD)
+            } else if line.starts_with("@@") {
+                Style::default()
+                    .fg(theme::HASH)
+                    .add_modifier(Modifier::BOLD)
+            } else if line.starts_with('+') {
+                Style::default().fg(Color::Green)
+            } else if line.starts_with('-') {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default().fg(theme::FG)
+            };
+            let is_cursor = cursor_line == Some(i);
+            let text = if is_cursor {
+                style = style.bg(theme::CURSOR_BG);
+                let pad_width = width.max(line.chars().count() as u16) as usize;
+                format!("{:<pad_width$}", line)
+            } else {
+                line.to_string()
+            };
+            Line::from(Span::styled(text, style))
         })
-        .collect();
-    let file_list = List::new(file_items).block(panel("Files", !app.git_panel_focused));
-    f.render_widget(file_list, chunks[1]);
+        .collect()
 }
 
 fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
@@ -296,8 +365,12 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
-fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64) {
-    let hint_str = "space select   c copy   ? help   q quit ";
+fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, is_git_mode: bool) {
+    let hint_str = if is_git_mode {
+        "space select   d toggle diff   c copy   ? help   q quit "
+    } else {
+        "space select   c copy   ? help   q quit "
+    };
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -388,6 +461,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Enter", "Toggle expand"),
         ("Backspace", "Parent dir"),
         ("Space", "Select/Unselect"),
+        ("d", "Toggle diff (Git mode)"),
         ("/ or Ctrl-f", "Search files"),
         ("Tab", "Toggle git tree"),
         ("?", "Toggle help"),
