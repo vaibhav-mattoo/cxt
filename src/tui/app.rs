@@ -77,6 +77,7 @@ impl DirItem {
 }
 
 pub struct AppState {
+    pub aider: bool,
     pub root_dir: PathBuf,
     pub tree_state: tui_tree_widget::TreeState<PathBuf>,
     pub dir_cache: HashMap<PathBuf, Vec<DirItem>>,
@@ -124,7 +125,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(relative: bool, no_path: bool) -> io::Result<Self> {
+    pub fn new(relative: bool, no_path: bool, aider: bool) -> io::Result<Self> {
         let root_dir = env::current_dir()?;
         let respect_gitignore = is_git_repo(&root_dir);
         let mut dir_cache = HashMap::new();
@@ -132,6 +133,7 @@ impl AppState {
         dir_cache.insert(root_dir.clone(), root_entries);
 
         let mut app = Self {
+            aider,
             root_dir,
             tree_state: tui_tree_widget::TreeState::default(),
             dir_cache,

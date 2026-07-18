@@ -230,9 +230,10 @@ fn main() -> Result<()> {
     let mut args = args;
     let paths: Vec<String> = if args.tui {
         // --tui explicitly requested: always launch interactive picker, ignore stdin.
-        let outcome = tui::run_tui(args.relative, args.no_path)?;
+        let outcome = tui::run_tui(args.relative, args.no_path, args.aider)?;
         args.relative = outcome.relative;
         args.no_path = outcome.no_path;
+        args.aider = outcome.aider;
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
@@ -254,9 +255,10 @@ fn main() -> Result<()> {
         combined
     } else if args.paths.is_empty() {
         // No stdin pipe, no CLI args: fall back to interactive TUI.
-        let outcome = tui::run_tui(args.relative, args.no_path)?;
+        let outcome = tui::run_tui(args.relative, args.no_path, args.aider)?;
         args.relative = outcome.relative;
         args.no_path = outcome.no_path;
+        args.aider = outcome.aider;
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());

@@ -55,16 +55,17 @@ pub struct TuiOutcome {
     pub paths: Vec<String>,
     pub relative: bool,
     pub no_path: bool,
+    pub aider: bool,
 }
 
-pub fn run_tui(relative: bool, no_path: bool) -> Result<TuiOutcome> {
+pub fn run_tui(relative: bool, no_path: bool, aider: bool) -> Result<TuiOutcome> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm_execute!(stdout, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let res = tui_main(&mut terminal, relative, no_path);
+    let res = tui_main(&mut terminal, relative, no_path, aider);
 
     disable_raw_mode()?;
     crossterm_execute!(
@@ -79,8 +80,9 @@ fn tui_main(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     relative: bool,
     no_path: bool,
+    aider: bool,
 ) -> Result<TuiOutcome> {
-    let mut app = AppState::new(relative, no_path).context("Failed to read current directory")?;
+    let mut app = AppState::new(relative, no_path, aider).context("Failed to read current directory")?;
     let mut message = String::new();
     let mut needs_redraw = true;
     let mut rendered_height: u16 = 0;
@@ -125,6 +127,7 @@ fn tui_main(
                         paths,
                         relative: app.relative,
                         no_path: app.no_path,
+                        aider: app.aider,
                     });
                 }
                 needs_redraw = true;

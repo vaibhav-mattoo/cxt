@@ -65,7 +65,7 @@ pub fn draw(
         render_file_list(f, app, chunks[1], inner_list_height as usize);
     }
     let is_git_mode = app.mode == AppMode::GitTree || app.mode == AppMode::GitStatus;
-    render_status_bar(f, chunks[2], message, file_count, loc_count, app.mode);
+    render_status_bar(f, chunks[2], message, file_count, loc_count, app.mode, app.aider);
     if app.show_help {
         render_help_overlay(f, f.area());
     }
@@ -506,15 +506,15 @@ fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> 
     ])
 }
 
-fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, mode: AppMode) {
+fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, mode: AppMode, aider: bool) {
     let hint_str = match mode {
         AppMode::GitStatus => {
-            "space select   s stage   Tab switch   c copy   ? help   q quit "
+            "space select   s stage   Tab switch   c copy   m aider   ? help   q quit "
         }
         AppMode::GitTree => {
-            "space select   d diff   c copy   ? help   q quit "
+            "space select   d diff   c copy   m aider   ? help   q quit "
         }
-        _ => "space select   c copy   ? help   q quit ",
+        _ => "space select   c copy   m aider   ? help   q quit ",
     };
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -524,13 +524,20 @@ fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize
         ])
         .split(area);
     if message.is_empty() {
-        let left = Line::from(vec![Span::styled(
+        let mut spans = vec![Span::styled(
             format!(
                 " {file_count} file{} selected | {loc_count} LOC",
                 if file_count == 1 { "" } else { "s" }
             ),
             Style::default().fg(theme::SELECTED),
-        )]);
+        )];
+        if aider {
+            spans.push(Span::styled(
+                " (aider patch)",
+                Style::default().fg(theme::MATCH).add_modifier(Modifier::BOLD),
+            ));
+        }
+        let left = Line::from(spans);
         f.render_widget(Paragraph::new(left), chunks[0]);
     } else {
         let error = Line::from(vec![Span::styled(
@@ -614,6 +621,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("/ or Ctrl-f", "Search files"),
         ("?", "Toggle help"),
         ("c", "Confirm selection"),
+        ("m", "Toggle aider patch"),
         ("p", "Restore last selection"),
         ("q/Ctrl-c", "Quit"),
         ("r", "Toggle relative path"),

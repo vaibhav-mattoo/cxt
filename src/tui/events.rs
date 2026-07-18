@@ -53,6 +53,10 @@ fn handle_git_status(
                 return Some(app.collect_selected_paths());
             }
         }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
+        }
         KeyCode::Char('s') => {
             if let Some(item) = app.git_status_items.get(app.git_status_cursor).cloned() {
                 let path = &item.path;
@@ -134,6 +138,10 @@ fn handle_git_tree(
             } else {
                 return Some(app.collect_selected_paths());
             }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
         }
         KeyCode::Char('p') => {
             let added = app.restore_last_selection();
@@ -237,6 +245,10 @@ fn handle_search_navigating(
             } else {
                 return Some(app.collect_selected_paths());
             }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
         }
         KeyCode::Char('/') => {
             app.mode = AppMode::SearchFocused;
@@ -414,6 +426,10 @@ fn handle_normal(
             } else {
                 return Some(app.collect_selected_paths());
             }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
         }
         KeyCode::Char('/') => {
             app.enter_search();
