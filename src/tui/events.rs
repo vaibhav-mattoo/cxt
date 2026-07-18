@@ -26,6 +26,25 @@ fn handle_git_status(
     key_event: KeyEvent,
     message: &mut String,
 ) -> Option<Vec<String>> {
+    if let Some(stash_ref) = app.pending_stash_pop.clone() {
+        match key_event.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let _ = std::process::Command::new("git")
+                    .args(["stash", "pop", &stash_ref])
+                    .output();
+                app.pending_stash_pop = None;
+                let old_cursor = app.git_status_cursor;
+                app.enter_git_status_mode();
+                app.git_status_cursor = old_cursor.min(app.git_status_total_len().saturating_sub(1));
+                app.fetch_git_status_diff();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_stash_pop = None;
+            }
+            _ => {}
+        }
+        return None;
+    }
     match key_event.code {
         KeyCode::Tab => {
             app.git_status_diff_focused = !app.git_status_diff_focused;
@@ -95,14 +114,7 @@ fn handle_git_status(
                     .get(app.git_status_cursor - items_len)
                     .cloned()
                 {
-                    let _ = std::process::Command::new("git")
-                        .args(["stash", "pop", &stash.stash_ref])
-                        .output();
-                    let old_cursor = app.git_status_cursor;
-                    app.enter_git_status_mode();
-                    app.git_status_cursor =
-                        old_cursor.min(app.git_status_total_len().saturating_sub(1));
-                    app.fetch_git_status_diff();
+                    app.pending_stash_pop = Some(stash.stash_ref.clone());
                 }
             }
         }

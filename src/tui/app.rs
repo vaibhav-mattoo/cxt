@@ -128,6 +128,7 @@ pub struct AppState {
     pub git_status_diff_cursor: usize,
     pub git_status_diff_focused: bool,
     pub git_stash_items: Vec<GitStashItem>,
+    pub pending_stash_pop: Option<String>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -185,6 +186,7 @@ impl AppState {
             git_status_diff_cursor: 0,
             git_status_diff_focused: false,
             git_stash_items: Vec::new(),
+            pending_stash_pop: None,
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -456,6 +458,7 @@ impl AppState {
         self.git_status_diff_cursor = 0;
         self.git_status_diff_focused = false;
         self.git_base_selected = self.selected.clone();
+        self.pending_stash_pop = None;
         self.mode = AppMode::GitStatus;
         self.fetch_git_status_diff();
     }

@@ -69,7 +69,61 @@ pub fn draw(
     if app.show_help {
         render_help_overlay(f, f.area());
     }
+    if let Some(stash_ref) = app.pending_stash_pop.clone() {
+        let stash_message = app
+            .git_stash_items
+            .iter()
+            .find(|s| s.stash_ref == stash_ref)
+            .map(|s| s.message.clone())
+            .unwrap_or_default();
+        render_confirm_overlay(f, f.area(), &stash_ref, &stash_message);
+    }
     inner_list_height
+}
+
+/// Small centered confirmation modal (e.g. "pop this stash?").
+fn render_confirm_overlay(f: &mut Frame, area: Rect, stash_ref: &str, stash_message: &str) {
+    let modal = centered_rect(46, 24, area);
+    f.render_widget(Clear, modal);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(
+            " Confirm Stash Pop ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+
+    let lines = vec![
+        Line::from(Span::styled(
+            format!("Pop {stash_ref}?"),
+            Style::default().fg(theme::FG).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            stash_message.to_string(),
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "y",
+                Style::default()
+                    .fg(theme::SELECTED)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" confirm    ", Style::default().fg(theme::MUTED)),
+            Span::styled(
+                "n / Esc",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" cancel", Style::default().fg(theme::MUTED)),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
 }
 
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
@@ -479,7 +533,10 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
         .map(|(_, item)| item)
         .collect();
 
-    let list = List::new(items).block(panel("Git Status", !app.git_status_diff_focused));
+    let list = List::new(items).block(panel(
+        if app.pending_stash_pop.is_some() { "Git Status — confirm pop" } else { "Git Status" },
+        !app.git_status_diff_focused,
+    ));
     f.render_widget(list, left_area);
 
     // ── Right panel: diff ──
