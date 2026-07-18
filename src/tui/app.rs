@@ -29,6 +29,12 @@ pub struct GitStatusItem {
 }
 
 #[derive(Clone)]
+pub struct GitStashItem {
+    pub stash_ref: String,
+    pub message: String,
+}
+
+#[derive(Clone)]
 pub struct SearchResult {
     pub path: PathBuf,
     pub display_name: String,
@@ -121,6 +127,7 @@ pub struct AppState {
     pub git_status_diff_scroll_offset: usize,
     pub git_status_diff_cursor: usize,
     pub git_status_diff_focused: bool,
+    pub git_stash_items: Vec<GitStashItem>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -177,6 +184,7 @@ impl AppState {
             git_status_diff_scroll_offset: 0,
             git_status_diff_cursor: 0,
             git_status_diff_focused: false,
+            git_stash_items: Vec::new(),
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -437,8 +445,10 @@ impl AppState {
             }
         }
 
-        if self.git_status_cursor >= items.len() {
-            self.git_status_cursor = items.len().saturating_sub(1);
+        self.fetch_git_stash_list();
+        let total = items.len() + self.git_stash_items.len();
+        if self.git_status_cursor >= total {
+            self.git_status_cursor = total.saturating_sub(1);
         }
         self.git_status_items = items;
         self.git_status_diff_content = String::new();
@@ -448,6 +458,34 @@ impl AppState {
         self.git_base_selected = self.selected.clone();
         self.mode = AppMode::GitStatus;
         self.fetch_git_status_diff();
+    }
+
+    /// Refresh the stash list (used on entering Git Status mode and after
+    /// pushing/popping a stash).
+    pub fn fetch_git_stash_list(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["stash", "list", "--pretty=format:%gd%x00%s"])
+            .output();
+        let mut items = Vec::new();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    let mut parts = line.splitn(2, '\0');
+                    let stash_ref = parts.next().unwrap_or("").to_string();
+                    let message = parts.next().unwrap_or("").to_string();
+                    if !stash_ref.is_empty() {
+                        items.push(GitStashItem { stash_ref, message });
+                    }
+                }
+            }
+        }
+        self.git_stash_items = items;
+    }
+
+    /// Total number of navigable rows in Git Status mode (file items + stashes).
+    pub fn git_status_total_len(&self) -> usize {
+        self.git_status_items.len() + self.git_stash_items.len()
     }
 
     pub fn fetch_git_files(&mut self) {
@@ -499,6 +537,34 @@ impl AppState {
     /// Fetch the diff for the currently selected git status item.
     /// Staged → `git diff --cached`, Unstaged → `git diff`, Untracked → file content.
     pub fn fetch_git_status_diff(&mut self) {
+        let items_len = self.git_status_items.len();
+        if self.git_status_cursor >= items_len {
+            let stash_idx = self.git_status_cursor - items_len;
+            let Some(stash) = self.git_stash_items.get(stash_idx).cloned() else {
+                self.git_status_diff_content = "No changes in working tree.".to_string();
+                self.git_status_diff_scroll_offset = 0;
+                self.git_status_diff_cursor = 0;
+                return;
+            };
+            let output = std::process::Command::new("git")
+                .args(["stash", "show", "-p", &stash.stash_ref])
+                .output();
+            self.git_status_diff_content = match output {
+                Ok(o) if o.status.success() => {
+                    let text = String::from_utf8_lossy(&o.stdout).to_string();
+                    if text.is_empty() {
+                        "(no textual diff)".to_string()
+                    } else {
+                        text
+                    }
+                }
+                Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+                Err(e) => format!("Failed to run git stash show: {e}"),
+            };
+            self.git_status_diff_scroll_offset = 0;
+            self.git_status_diff_cursor = 0;
+            return;
+        }
         let Some(item) = self.git_status_items.get(self.git_status_cursor).cloned() else {
             self.git_status_diff_content = "No changes in working tree.".to_string();
             self.git_status_diff_scroll_offset = 0;

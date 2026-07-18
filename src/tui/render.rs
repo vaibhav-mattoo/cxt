@@ -399,6 +399,7 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
     let staged: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Staged).collect();
     let unstaged: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Unstaged).collect();
     let untracked: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Untracked).collect();
+    let items_len = app.git_status_items.len();
 
     let header_style = Style::default().fg(theme::MUTED).add_modifier(Modifier::BOLD);
     let divider_style = Style::default().fg(theme::BORDER);
@@ -443,6 +444,24 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
         }
     }
 
+    push_header(&mut visual_items, "Stash", app.git_stash_items.len());
+    if app.git_stash_items.is_empty() {
+        visual_items.push((None, ListItem::new(Line::from(Span::styled("   (none)", Style::default().fg(theme::MUTED))))));
+    } else {
+        for (i, stash) in app.git_stash_items.iter().enumerate() {
+            let idx = items_len + i;
+            let is_cursor = idx == app.git_status_cursor;
+            let line = Line::from(vec![
+                Span::styled(
+                    format!("{} ", stash.stash_ref),
+                    Style::default().fg(theme::HASH).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(stash.message.clone(), Style::default().fg(theme::FG)),
+            ]);
+            visual_items.push((Some(idx), ListItem::new(line).style(if is_cursor { Style::default().bg(theme::CURSOR_BG) } else { Style::default() })));
+        }
+    }
+
     let selected_visual = visual_items.iter().position(|(idx, _)| *idx == Some(app.git_status_cursor)).unwrap_or(0);
 
     let scroll_offset = if selected_visual < app.git_status_scroll_offset {
@@ -465,11 +484,17 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
 
     // ── Right panel: diff ──
     app.sync_git_status_diff_scroll(list_height);
-    let diff_title = app
-        .git_status_items
-        .get(app.git_status_cursor)
-        .map(|i| i.path.clone())
-        .unwrap_or_else(|| "No changes".to_string());
+    let diff_title = if app.git_status_cursor < items_len {
+        app.git_status_items
+            .get(app.git_status_cursor)
+            .map(|i| i.path.clone())
+            .unwrap_or_else(|| "No changes".to_string())
+    } else {
+        app.git_stash_items
+            .get(app.git_status_cursor - items_len)
+            .map(|s| format!("{} {}", s.stash_ref, s.message))
+            .unwrap_or_else(|| "No stash".to_string())
+    };
     let diff_block = panel(&format!("Diff: {diff_title}"), app.git_status_diff_focused);
     let diff_inner_width = diff_block.inner(right_area).width;
     let cursor_line = if app.git_status_diff_focused {
@@ -509,7 +534,7 @@ fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> 
 fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, mode: AppMode, aider: bool) {
     let hint_str = match mode {
         AppMode::GitStatus => {
-            "space select   s stage   Tab switch   c copy   m aider   ? help   q quit "
+            "space select   s stage   z stash   Tab switch   c copy   m aider   ? help   q quit "
         }
         AppMode::GitTree => {
             "space select   d diff   c copy   m aider   ? help   q quit "
@@ -617,6 +642,8 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("2", "Git tree mode"),
         ("Tab", "Switch panel / exit git"),
         ("s", "Stage/Unstage (Git Status mode)"),
+        ("z", "Stash changes (Git Status mode)"),
+        ("Enter", "Pop stash (on stash item)"),
         ("d", "Toggle diff (Git mode)"),
         ("/ or Ctrl-f", "Search files"),
         ("?", "Toggle help"),

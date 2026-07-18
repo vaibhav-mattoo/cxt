@@ -78,6 +78,34 @@ fn handle_git_status(
                 app.fetch_git_status_diff();
             }
         }
+        KeyCode::Char('z') => {
+            let _ = std::process::Command::new("git")
+                .args(["stash", "push"])
+                .output();
+            let old_cursor = app.git_status_cursor;
+            app.enter_git_status_mode();
+            app.git_status_cursor = old_cursor.min(app.git_status_total_len().saturating_sub(1));
+            app.fetch_git_status_diff();
+        }
+        KeyCode::Enter => {
+            let items_len = app.git_status_items.len();
+            if app.git_status_cursor >= items_len {
+                if let Some(stash) = app
+                    .git_stash_items
+                    .get(app.git_status_cursor - items_len)
+                    .cloned()
+                {
+                    let _ = std::process::Command::new("git")
+                        .args(["stash", "pop", &stash.stash_ref])
+                        .output();
+                    let old_cursor = app.git_status_cursor;
+                    app.enter_git_status_mode();
+                    app.git_status_cursor =
+                        old_cursor.min(app.git_status_total_len().saturating_sub(1));
+                    app.fetch_git_status_diff();
+                }
+            }
+        }
         KeyCode::Char(' ') => {
             if let Some(item) = app.git_status_items.get(app.git_status_cursor).cloned() {
                 let path = app.git_file_abs_path(&item.path);
@@ -106,7 +134,7 @@ fn handle_git_status(
                 if app.git_status_diff_cursor + 1 < len {
                     app.git_status_diff_cursor += 1;
                 }
-            } else if app.git_status_cursor + 1 < app.git_status_items.len() {
+            } else if app.git_status_cursor + 1 < app.git_status_total_len() {
                 app.git_status_cursor += 1;
                 app.fetch_git_status_diff();
             }
@@ -362,7 +390,7 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                     if app.git_status_diff_cursor + 1 < len {
                         app.git_status_diff_cursor += 1;
                     }
-                } else if app.git_status_cursor + 1 < app.git_status_items.len() {
+                } else if app.git_status_cursor + 1 < app.git_status_total_len() {
                     app.git_status_cursor += 1;
                     app.fetch_git_status_diff();
                 }
