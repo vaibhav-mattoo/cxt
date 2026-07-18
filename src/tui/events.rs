@@ -162,7 +162,10 @@ fn handle_git_tree(
     message: &mut String,
 ) -> Option<Vec<String>> {
     match key_event.code {
-        KeyCode::Tab | KeyCode::Char('2') | KeyCode::Esc => {
+        KeyCode::Tab => {
+            app.git_panel_focused = !app.git_panel_focused;
+        }
+        KeyCode::Char('2') | KeyCode::Esc => {
             app.mode = AppMode::Normal;
         }
         KeyCode::Char('1') => {
