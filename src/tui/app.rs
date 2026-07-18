@@ -27,6 +27,7 @@ pub struct SearchResult {
 pub struct GitCommit {
     pub display: String,
     pub hash: String,
+    pub refs: String,
 }
 
 /// Detect whether `dir` is inside a git work-tree by walking up for a `.git` entry.
@@ -300,7 +301,7 @@ impl AppState {
 
     pub fn enter_git_tree_mode(&mut self) {
         if let Ok(output) = std::process::Command::new("git")
-            .args(["log", "--graph", "--pretty=format:%H%x00%s"])
+            .args(["log", "--graph", "--pretty=format:%H%x00%d%x00%s"])
             .output()
         {
             if output.status.success() {
@@ -308,8 +309,9 @@ impl AppState {
                 self.git_commits = stdout
                     .lines()
                     .map(|line| {
-                        let mut parts = line.splitn(2, '\0');
+                        let mut parts = line.splitn(3, '\0');
                         let graph_hash = parts.next().unwrap_or("");
+                        let refs_raw = parts.next().unwrap_or("");
                         let message = parts.next().unwrap_or("");
 
                         let long_hash = graph_hash
@@ -335,19 +337,28 @@ impl AppState {
                             format!("{} {}", display_graph, message)
                         };
 
-                        GitCommit { display, hash }
+                        let refs = refs_raw
+                            .trim()
+                            .trim_start_matches('(')
+                            .trim_end_matches(')')
+                            .trim()
+                            .to_string();
+
+                        GitCommit { display, hash, refs }
                     })
                     .collect();
             } else {
                 self.git_commits = vec![GitCommit {
                     display: "Failed to load git log. Not a git repository?".to_string(),
                     hash: String::new(),
+                    refs: String::new(),
                 }];
             }
         } else {
             self.git_commits = vec![GitCommit {
                 display: "Failed to execute git command.".to_string(),
                 hash: String::new(),
+                refs: String::new(),
             }];
         }
 

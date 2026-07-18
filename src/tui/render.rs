@@ -123,6 +123,9 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
     let hash_style = Style::default()
         .fg(theme::HASH)
         .add_modifier(Modifier::BOLD);
+    let refs_style = Style::default()
+        .fg(theme::REFS)
+        .add_modifier(Modifier::BOLD);
     let commit_items: Vec<ListItem> = app
         .git_commits
         .iter()
@@ -141,6 +144,10 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
             if is_cursor {
                 h_style = h_style.bg(theme::CURSOR_BG);
             }
+            let mut r_style = refs_style;
+            if is_cursor {
+                r_style = r_style.bg(theme::CURSOR_BG);
+            }
             let marker_style = Style::default()
                 .fg(theme::SELECTED)
                 .add_modifier(Modifier::BOLD);
@@ -156,6 +163,9 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
                     let after = commit.display[pos + commit.hash.len()..].to_string();
                     spans.push(Span::styled(before, fg_style));
                     spans.push(Span::styled(commit.hash.clone(), h_style));
+                    if !commit.refs.is_empty() {
+                        spans.push(Span::styled(format!(" ({})", commit.refs), r_style));
+                    }
                     spans.push(Span::styled(after, fg_style));
                 } else {
                     spans.push(Span::styled(commit.display.clone(), fg_style));
