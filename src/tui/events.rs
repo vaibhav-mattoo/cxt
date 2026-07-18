@@ -18,6 +18,8 @@ pub fn handle_key_event(
         AppMode::Normal => handle_normal(app, key_event, message),
         AppMode::GitTree => handle_git_tree(app, key_event, message),
         AppMode::GitStatus => handle_git_status(app, key_event, message),
+        AppMode::RgFocused => handle_rg_focused(app, key_event),
+        AppMode::RgNavigating => handle_rg_navigating(app, key_event, message),
     }
 }
 
@@ -276,6 +278,101 @@ fn handle_git_tree(
     None
 }
 
+fn handle_rg_focused(app: &mut AppState, key_event: KeyEvent) -> Option<Vec<String>> {
+    match key_event.code {
+        KeyCode::Esc => {
+            app.exit_rg();
+        }
+        KeyCode::Backspace => {
+            app.pop_rg_char();
+        }
+        KeyCode::Enter | KeyCode::Down | KeyCode::Up => {
+            if !app.rg_results.is_empty() {
+                app.mode = AppMode::RgNavigating;
+            }
+        }
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(vec![]);
+        }
+        KeyCode::Char(c) => {
+            app.push_rg_char(c);
+        }
+        _ => {}
+    }
+    None
+}
+
+fn handle_rg_navigating(
+    app: &mut AppState,
+    key_event: KeyEvent,
+    message: &mut String,
+) -> Option<Vec<String>> {
+    match key_event.code {
+        KeyCode::Char('q') => return Some(vec![]),
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(vec![]);
+        }
+        KeyCode::Char('c') => {
+            if app.selected.is_empty() {
+                *message = "No files or directories selected!".to_string();
+            } else {
+                return Some(app.collect_selected_paths());
+            }
+        }
+        KeyCode::Char('y') => {
+            if let Some(result) = app.rg_results.get(app.rg_cursor) {
+                let text = format!(
+                    "{}:{}:{}",
+                    result.path.display(),
+                    result.line_number,
+                    result.line_content
+                );
+                match crate::tui::copy_text_to_clipboard(&text) {
+                    Ok(()) => *message = "Copied result to clipboard.".to_string(),
+                    Err(e) => *message = format!("Failed to copy: {e}"),
+                }
+            }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
+        }
+        KeyCode::Char('\'') => {
+            app.mode = AppMode::RgFocused;
+        }
+        KeyCode::Esc => {
+            app.exit_rg();
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if let Some(result) = app.rg_results.get(app.rg_cursor) {
+                let path = result.path.clone();
+                app.toggle_selection(path, false);
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') if app.rg_cursor > 0 => {
+            app.rg_cursor -= 1;
+        }
+        KeyCode::Down | KeyCode::Char('j')
+            if app.rg_cursor + 1 < app.rg_results.len() =>
+        {
+            app.rg_cursor += 1;
+        }
+        KeyCode::Char('p') => {
+            let added = app.restore_last_selection();
+            *message = if added > 0 {
+                format!(
+                    "Restored last selection (+{added} file{}).",
+                    if added == 1 { "" } else { "s" }
+                )
+            } else {
+                "No previous selection in this session.".to_string()
+            };
+        }
+        _ => {}
+    }
+    None
+}
+
 fn handle_search_focused(app: &mut AppState, key_event: KeyEvent) -> Option<Vec<String>> {
     match key_event.code {
         KeyCode::Esc => {
@@ -499,6 +596,9 @@ fn handle_normal(
         }
         KeyCode::Char('/') => {
             app.enter_search();
+        }
+        KeyCode::Char('\'') => {
+            app.enter_rg();
         }
         KeyCode::Char('f') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
             app.enter_search();

@@ -52,6 +52,15 @@ pub(super) fn load_last_selection() -> Option<HashSet<PathBuf>> {
     if paths.is_empty() { None } else { Some(paths) }
 }
 
+pub fn copy_text_to_clipboard(text: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut handler = crate::output_handler::OutputHandler::new();
+    let mut cw = handler.get_clipboard_writer()?;
+    cw.write_all(text.as_bytes())?;
+    cw.finish()?;
+    Ok(())
+}
+
 pub struct TuiOutcome {
     pub paths: Vec<String>,
     pub relative: bool,
@@ -102,6 +111,9 @@ fn tui_main(
                     }
                     AppMode::GitStatus => {
                         app.sync_git_status_diff_scroll(app.visible_height);
+                    }
+                    AppMode::RgFocused | AppMode::RgNavigating => {
+                        app.sync_rg_scroll(app.visible_height);
                     }
                     _ => {
                         app.sync_search_scroll(app.visible_height);

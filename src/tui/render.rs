@@ -61,6 +61,8 @@ pub fn draw(
         render_git_tree(f, app, chunks[1], inner_list_height as usize);
     } else if app.mode == AppMode::GitStatus {
         render_git_status(f, app, chunks[1], inner_list_height as usize);
+    } else if app.mode == AppMode::RgFocused || app.mode == AppMode::RgNavigating {
+        render_rg(f, app, chunks[1], inner_list_height as usize);
     } else {
         render_file_list(f, app, chunks[1], inner_list_height as usize);
     }
@@ -177,7 +179,23 @@ fn render_branch_switch_overlay(f: &mut Frame, area: Rect, branch: &str) {
 
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
     let (path, title_str, path_style) =
-        if app.mode == AppMode::SearchFocused || app.mode == AppMode::SearchNavigating {
+        if app.mode == AppMode::RgFocused || app.mode == AppMode::RgNavigating {
+            let rg_display = format!("rg: {}", app.rg_query);
+            let title = if app.mode == AppMode::RgFocused {
+                "Enter pattern, Esc to leave rg".to_string()
+            } else {
+                "y copy result   space select   c copy files   Esc to leave".to_string()
+            };
+            let style = if app.mode == AppMode::RgFocused {
+                Style::default()
+                    .fg(theme::MATCH)
+                    .bg(theme::CURSOR_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            (rg_display, title, style)
+        } else if app.mode == AppMode::SearchFocused || app.mode == AppMode::SearchNavigating {
             let search_display = format!("Search: {}", app.search_query);
             let title = if app.mode == AppMode::SearchFocused {
                 "Enter to search, Esc to leave search".to_string()
@@ -238,6 +256,15 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
             .x
             .saturating_add(prefix_len)
             .saturating_add(app.search_query.chars().count() as u16)
+            .min(inner.x + inner.width.saturating_sub(1));
+        f.set_cursor_position(Position::new(cursor_x, inner.y));
+    } else if app.mode == AppMode::RgFocused {
+        // "rg: " prefix is 4 chars.
+        let prefix_len = 4u16;
+        let cursor_x = inner
+            .x
+            .saturating_add(prefix_len)
+            .saturating_add(app.rg_query.chars().count() as u16)
             .min(inner.x + inner.width.saturating_sub(1));
         f.set_cursor_position(Position::new(cursor_x, inner.y));
     }
@@ -687,6 +714,126 @@ fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> 
     ])
 }
 
+fn render_rg(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(area);
+
+    // ── Left panel: file tree (shows current selection state) ──
+    let open = app.tree_state.opened().clone();
+    let visible_dirs = collect_visible_dirs(&app.root_dir, &app.dir_cache, &open);
+    let fully_selected_dirs: HashSet<PathBuf> = visible_dirs
+        .into_iter()
+        .filter(|d| app.dir_fully_selected(d))
+        .collect();
+
+    let items = build_styled_tree_items(
+        &app.root_dir,
+        &app.dir_cache,
+        &open,
+        &app.selected,
+        &fully_selected_dirs,
+    );
+
+    let Ok(tree_widget) = Tree::new(&items) else {
+        f.render_widget(panel("Files", false), chunks[0]);
+        return;
+    };
+    let tree_widget = tree_widget
+        .block(panel("Files", false))
+        .highlight_style(
+            Style::default()
+                .bg(theme::CURSOR_BG)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▎ ");
+    f.render_stateful_widget(tree_widget, chunks[0], &mut app.tree_state);
+
+    // ── Right panel: rg results ──
+    let match_style = Style::default()
+        .fg(theme::MATCH)
+        .add_modifier(Modifier::BOLD);
+
+    let items: Vec<ListItem> = app
+        .rg_results
+        .iter()
+        .enumerate()
+        .skip(app.rg_scroll_offset)
+        .take(list_height)
+        .map(|(i, result)| {
+            let is_cursor = i == app.rg_cursor;
+            let is_selected = app.selected.contains(&result.path);
+
+            let marker = if is_selected { "✓ " } else { "  " };
+            let path_style = Style::default().fg(theme::DIR);
+            let line_num_style = Style::default().fg(theme::HASH);
+            let content_style = Style::default().fg(theme::FG);
+            let muted_style = Style::default().fg(theme::MUTED);
+
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            spans.push(Span::styled(
+                marker,
+                Style::default()
+                    .fg(theme::SELECTED)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+            let path_str = result.path.display().to_string();
+            let display_path = if path_str.len() > 40 {
+                format!("...{}", &path_str[path_str.len().saturating_sub(37)..])
+            } else {
+                path_str
+            };
+            spans.push(Span::styled(display_path, path_style));
+            spans.push(Span::styled(":", muted_style));
+            spans.push(Span::styled(result.line_number.to_string(), line_num_style));
+            spans.push(Span::styled(":", muted_style));
+
+            let content_line = highlight_matches(
+                &result.line_content,
+                &result.match_indices,
+                content_style,
+                match_style,
+            );
+            spans.extend(content_line.spans);
+
+            let cursor_style = if is_cursor {
+                Style::default()
+                    .bg(theme::CURSOR_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(Line::from(spans)).style(cursor_style)
+        })
+        .collect();
+
+    let title = if app.rg_results.is_empty() && !app.rg_query.is_empty() {
+        "rg Results (no matches)".to_string()
+    } else {
+        format!("rg Results ({})", app.rg_results.len())
+    };
+    let list = List::new(items).block(panel(&title, app.mode == AppMode::RgNavigating));
+    f.render_widget(list, chunks[1]);
+
+    if !app.rg_results.is_empty() {
+        let mut sb_state =
+            ScrollbarState::new(app.rg_results.len()).position(app.rg_cursor);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None),
+            chunks[1].inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut sb_state,
+        );
+    }
+}
+
 fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, mode: AppMode, aider: bool) {
     let hint_str = match mode {
         AppMode::GitStatus => {
@@ -694,6 +841,9 @@ fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize
         }
         AppMode::GitTree => {
             "space select   d diff   c copy   m aider   ? help   q quit "
+        }
+        AppMode::RgFocused | AppMode::RgNavigating => {
+            "' edit   y copy result   space select   c copy files   m aider   ? help   q quit "
         }
         _ => "space select   c copy   m aider   ? help   q quit ",
     };
@@ -802,6 +952,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Enter", "Pop stash / Switch branch"),
         ("d", "Toggle diff (Git mode)"),
         ("/ or Ctrl-f", "Search files"),
+        ("'", "rg search file contents"),
         ("?", "Toggle help"),
         ("c", "Confirm selection"),
         ("m", "Toggle aider patch"),

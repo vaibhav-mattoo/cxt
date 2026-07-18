@@ -13,6 +13,8 @@ pub enum AppMode {
     SearchNavigating,
     GitTree,
     GitStatus,
+    RgFocused,
+    RgNavigating,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -46,6 +48,14 @@ pub struct SearchResult {
     pub display_name: String,
     pub is_dir: bool,
     pub match_score: i64,
+    pub match_indices: Vec<usize>,
+}
+
+#[derive(Clone)]
+pub struct RgResult {
+    pub path: PathBuf,
+    pub line_number: usize,
+    pub line_content: String,
     pub match_indices: Vec<usize>,
 }
 
@@ -138,6 +148,10 @@ pub struct AppState {
     pub git_branch_items: Vec<GitBranchItem>,
     pub pending_branch_switch: Option<String>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
+    pub rg_query: String,
+    pub rg_results: Vec<RgResult>,
+    pub rg_cursor: usize,
+    pub rg_scroll_offset: usize,
 }
 
 impl AppState {
@@ -198,6 +212,10 @@ impl AppState {
             git_branch_items: Vec::new(),
             pending_branch_switch: None,
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
+            rg_query: String::new(),
+            rg_results: Vec::new(),
+            rg_cursor: 0,
+            rg_scroll_offset: 0,
         };
         app.select_first_entry();
         Ok(app)
@@ -222,7 +240,132 @@ impl AppState {
     }
 }
 
-// SelectionExt
+// RgExt (ripgrep content search mode)
+impl AppState {
+    pub fn enter_rg(&mut self) {
+        self.mode = AppMode::RgFocused;
+        self.rg_query.clear();
+        self.rg_results.clear();
+        self.rg_cursor = 0;
+        self.rg_scroll_offset = 0;
+    }
+
+    pub fn exit_rg(&mut self) {
+        self.mode = AppMode::Normal;
+        self.rg_query.clear();
+        self.rg_results.clear();
+        self.rg_cursor = 0;
+        self.rg_scroll_offset = 0;
+    }
+
+    pub fn push_rg_char(&mut self, c: char) {
+        self.rg_query.push(c);
+        self.update_rg();
+    }
+
+    pub fn pop_rg_char(&mut self) {
+        self.rg_query.pop();
+        self.update_rg();
+    }
+
+    pub fn update_rg(&mut self) {
+        if self.rg_query.is_empty() {
+            self.rg_results.clear();
+            self.rg_cursor = 0;
+            self.rg_scroll_offset = 0;
+            return;
+        }
+
+        let git_child = std::process::Command::new("git")
+            .args(["ls-files", "-z", "--"])
+            .arg(&self.root_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        let output = match git_child {
+            Ok(mut git_child) => {
+                let git_stdout = git_child.stdout.take().unwrap();
+                let result = std::process::Command::new("xargs")
+                    .args([
+                        "-0", "rg", "--line-number", "--no-heading",
+                        "--color=never", "--", &self.rg_query,
+                    ])
+                    .stdin(git_stdout)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .output();
+                let _ = git_child.wait();
+                match result {
+                    Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+                    Err(_) => String::new(),
+                }
+            }
+            Err(_) => String::new(),
+        };
+
+        let query_lower = self.rg_query.to_lowercase();
+        let query_char_count = self.rg_query.chars().count();
+        let mut parsed = Vec::new();
+        for line in output.lines() {
+            let parts: Vec<&str> = line.splitn(3, ':').collect();
+            if parts.len() == 3 {
+                let path = PathBuf::from(parts[0]);
+                let line_num: usize = parts[1].parse().unwrap_or(0);
+                let content = parts[2];
+
+                let mut indices = Vec::new();
+                let content_lower = content.to_lowercase();
+                let mut start = 0;
+                while let Some(pos) = content_lower[start..].find(&query_lower) {
+                    let abs = start + pos;
+                    for i in 0..query_char_count {
+                        indices.push(abs + i);
+                    }
+                    start = abs + query_char_count;
+                }
+
+                parsed.push(RgResult {
+                    path,
+                    line_number: line_num,
+                    line_content: content.to_string(),
+                    match_indices: indices,
+                });
+            }
+        }
+        self.rg_results = parsed;
+        self.rg_cursor = 0;
+        self.rg_scroll_offset = 0;
+    }
+
+    pub fn sync_rg_scroll(&mut self, visible_height: usize) {
+        let len = self.rg_results.len();
+        if self.rg_cursor >= len {
+            self.rg_cursor = len.saturating_sub(1);
+        }
+        if len <= visible_height {
+            self.rg_scroll_offset = 0;
+            return;
+        }
+        let top_margin = 2;
+        let bottom_margin = 2;
+        if self.rg_cursor < self.rg_scroll_offset + top_margin
+            && self.rg_scroll_offset > 0
+        {
+            self.rg_scroll_offset = self.rg_cursor.saturating_sub(top_margin);
+        } else if self.rg_cursor + bottom_margin >= self.rg_scroll_offset + visible_height
+            && self.rg_scroll_offset + visible_height < len
+        {
+            self.rg_scroll_offset =
+                (self.rg_cursor + bottom_margin + 1).saturating_sub(visible_height);
+        }
+        self.rg_scroll_offset = self
+            .rg_scroll_offset
+            .min(len.saturating_sub(visible_height));
+    }
+}
+
+// ScrollExt (search mode only — tree widget self-manages scrolling)
 impl AppState {
     pub(crate) fn invalidate_caches(&mut self) {
         self.selected_file_count_cache = None;
