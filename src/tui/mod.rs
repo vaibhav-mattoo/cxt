@@ -89,10 +89,16 @@ fn tui_main(
         if needs_redraw {
             // Search mode manages its own cursor scrolling; tree widget self-manages.
             if app.mode != AppMode::Normal {
-                if app.mode == AppMode::GitTree {
-                    app.sync_git_scroll(app.visible_height);
-                } else {
-                    app.sync_search_scroll(app.visible_height);
+                match app.mode {
+                    AppMode::GitTree => {
+                        app.sync_git_scroll(app.visible_height);
+                    }
+                    AppMode::GitStatus => {
+                        app.sync_git_status_diff_scroll(app.visible_height);
+                    }
+                    _ => {
+                        app.sync_search_scroll(app.visible_height);
+                    }
                 }
             }
             let file_count = app.selected_file_count();

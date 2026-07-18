@@ -27,7 +27,16 @@ fn handle_git_status(
     message: &mut String,
 ) -> Option<Vec<String>> {
     match key_event.code {
-        KeyCode::Tab | KeyCode::Char('1') | KeyCode::Esc => {
+        KeyCode::Tab => {
+            app.git_status_diff_focused = !app.git_status_diff_focused;
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.git_status_diff_focused = false;
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.git_status_diff_focused = true;
+        }
+        KeyCode::Char('1') | KeyCode::Esc => {
             app.mode = AppMode::Normal;
         }
         KeyCode::Char('2') => {
@@ -62,6 +71,7 @@ fn handle_git_status(
                 let old_cursor = app.git_status_cursor;
                 app.enter_git_status_mode();
                 app.git_status_cursor = old_cursor.min(app.git_status_items.len().saturating_sub(1));
+                app.fetch_git_status_diff();
             }
         }
         KeyCode::Char(' ') => {
@@ -77,13 +87,24 @@ fn handle_git_status(
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if app.git_status_cursor > 0 {
+            if app.git_status_diff_focused {
+                if app.git_status_diff_cursor > 0 {
+                    app.git_status_diff_cursor -= 1;
+                }
+            } else if app.git_status_cursor > 0 {
                 app.git_status_cursor -= 1;
+                app.fetch_git_status_diff();
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if app.git_status_cursor + 1 < app.git_status_items.len() {
+            if app.git_status_diff_focused {
+                let len = app.git_status_diff_content.lines().count();
+                if app.git_status_diff_cursor + 1 < len {
+                    app.git_status_diff_cursor += 1;
+                }
+            } else if app.git_status_cursor + 1 < app.git_status_items.len() {
                 app.git_status_cursor += 1;
+                app.fetch_git_status_diff();
             }
         }
         _ => {}
@@ -324,8 +345,14 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                     app.git_files_cursor += 1;
                 }
             } else if app.mode == AppMode::GitStatus {
-                if app.git_status_cursor + 1 < app.git_status_items.len() {
+                if app.git_status_diff_focused {
+                    let len = app.git_status_diff_content.lines().count();
+                    if app.git_status_diff_cursor + 1 < len {
+                        app.git_status_diff_cursor += 1;
+                    }
+                } else if app.git_status_cursor + 1 < app.git_status_items.len() {
                     app.git_status_cursor += 1;
+                    app.fetch_git_status_diff();
                 }
             } else if app.search_cursor + 1 < app.search_results.len() {
                 app.search_cursor += 1;
@@ -345,8 +372,13 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                     app.git_files_cursor -= 1;
                 }
             } else if app.mode == AppMode::GitStatus {
-                if app.git_status_cursor > 0 {
+                if app.git_status_diff_focused {
+                    if app.git_status_diff_cursor > 0 {
+                        app.git_status_diff_cursor -= 1;
+                    }
+                } else if app.git_status_cursor > 0 {
                     app.git_status_cursor -= 1;
+                    app.fetch_git_status_diff();
                 }
             } else if app.search_cursor > 0 {
                 app.search_cursor -= 1;

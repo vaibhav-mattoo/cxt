@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Normal,
     SearchFocused,
@@ -116,6 +116,10 @@ pub struct AppState {
     pub git_status_items: Vec<GitStatusItem>,
     pub git_status_cursor: usize,
     pub git_status_scroll_offset: usize,
+    pub git_status_diff_content: String,
+    pub git_status_diff_scroll_offset: usize,
+    pub git_status_diff_cursor: usize,
+    pub git_status_diff_focused: bool,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -167,6 +171,10 @@ impl AppState {
             git_status_items: Vec::new(),
             git_status_cursor: 0,
             git_status_scroll_offset: 0,
+            git_status_diff_content: String::new(),
+            git_status_diff_scroll_offset: 0,
+            git_status_diff_cursor: 0,
+            git_status_diff_focused: false,
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -431,8 +439,13 @@ impl AppState {
             self.git_status_cursor = items.len().saturating_sub(1);
         }
         self.git_status_items = items;
+        self.git_status_diff_content = String::new();
+        self.git_status_diff_scroll_offset = 0;
+        self.git_status_diff_cursor = 0;
+        self.git_status_diff_focused = false;
         self.git_base_selected = self.selected.clone();
         self.mode = AppMode::GitStatus;
+        self.fetch_git_status_diff();
     }
 
     pub fn fetch_git_files(&mut self) {
@@ -479,6 +492,86 @@ impl AppState {
         env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(file)
+    }
+
+    /// Fetch the diff for the currently selected git status item.
+    /// Staged → `git diff --cached`, Unstaged → `git diff`, Untracked → file content.
+    pub fn fetch_git_status_diff(&mut self) {
+        let Some(item) = self.git_status_items.get(self.git_status_cursor).cloned() else {
+            self.git_status_diff_content = "No changes in working tree.".to_string();
+            self.git_status_diff_scroll_offset = 0;
+            self.git_status_diff_cursor = 0;
+            return;
+        };
+
+        let output = match item.section {
+            GitStatusSection::Staged => {
+                std::process::Command::new("git")
+                    .args(["diff", "--cached", "--", &item.path])
+                    .output()
+            }
+            GitStatusSection::Unstaged => {
+                std::process::Command::new("git")
+                    .args(["diff", "--", &item.path])
+                    .output()
+            }
+            GitStatusSection::Untracked => {
+                let abs_path = self.git_file_abs_path(&item.path);
+                match std::fs::read_to_string(&abs_path) {
+                    Ok(content) => {
+                        self.git_status_diff_content = content;
+                    }
+                    Err(_) => {
+                        self.git_status_diff_content =
+                            "Untracked file (binary or unreadable).".to_string();
+                    }
+                }
+                self.git_status_diff_scroll_offset = 0;
+                self.git_status_diff_cursor = 0;
+                return;
+            }
+        };
+
+        self.git_status_diff_content = match output {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout).to_string();
+                if text.is_empty() {
+                    "(no textual diff)".to_string()
+                } else {
+                    text
+                }
+            }
+            Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => format!("Failed to run git diff: {e}"),
+        };
+        self.git_status_diff_scroll_offset = 0;
+        self.git_status_diff_cursor = 0;
+    }
+
+    /// Keep the diff cursor within the viewport, scrolling when it leaves.
+    pub fn sync_git_status_diff_scroll(&mut self, visible_height: usize) {
+        self.visible_height = visible_height;
+        let len = self.git_status_diff_content.lines().count();
+        if len == 0 {
+            self.git_status_diff_cursor = 0;
+            self.git_status_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_status_diff_cursor >= len {
+            self.git_status_diff_cursor = len - 1;
+        }
+        if len <= visible_height {
+            self.git_status_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_status_diff_cursor < self.git_status_diff_scroll_offset {
+            self.git_status_diff_scroll_offset = self.git_status_diff_cursor;
+        } else if self.git_status_diff_cursor >= self.git_status_diff_scroll_offset + visible_height {
+            self.git_status_diff_scroll_offset = self.git_status_diff_cursor + 1 - visible_height;
+        }
+        self.git_status_diff_scroll_offset = self
+            .git_status_diff_scroll_offset
+            .min(len.saturating_sub(visible_height));
     }
     pub fn fetch_git_diff(&mut self) {
         let hash = self

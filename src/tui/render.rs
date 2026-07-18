@@ -65,7 +65,7 @@ pub fn draw(
         render_file_list(f, app, chunks[1], inner_list_height as usize);
     }
     let is_git_mode = app.mode == AppMode::GitTree || app.mode == AppMode::GitStatus;
-    render_status_bar(f, chunks[2], message, file_count, loc_count, is_git_mode);
+    render_status_bar(f, chunks[2], message, file_count, loc_count, app.mode);
     if app.show_help {
         render_help_overlay(f, f.area());
     }
@@ -74,7 +74,7 @@ pub fn draw(
 
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
     let (path, title_str, path_style) =
-        if app.mode != AppMode::Normal && app.mode != AppMode::GitTree {
+        if app.mode == AppMode::SearchFocused || app.mode == AppMode::SearchNavigating {
             let search_display = format!("Search: {}", app.search_query);
             let title = if app.mode == AppMode::SearchFocused {
                 "Enter to search, Esc to leave search".to_string()
@@ -102,17 +102,25 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
             } else {
                 app.root_dir.display().to_string()
             };
-            let mut title_str = "Current Directory".to_string();
-            if app.no_path {
-                title_str.push_str(" [n: no path]");
-            } else if app.relative {
-                title_str.push_str(" [r: relative]");
-            }
+            let title_str = if app.mode == AppMode::GitStatus {
+                "Git Status".to_string()
+            } else {
+                let mut t = "Current Directory".to_string();
+                if app.no_path {
+                    t.push_str(" [n: no path]");
+                } else if app.relative {
+                    t.push_str(" [r: relative]");
+                }
+                t
+            };
             (path, title_str, Style::default())
         };
 
     let path_widget = Paragraph::new(path)
-        .block(panel(&title_str, app.mode != AppMode::Normal))
+        .block(panel(
+            &title_str,
+            app.mode != AppMode::Normal && app.mode != AppMode::GitStatus,
+        ))
         .style(path_style)
         .wrap(Wrap { trim: true });
     f.render_widget(path_widget, area);
@@ -379,6 +387,15 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
 }
 
 fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(area);
+
+    let left_area = chunks[0];
+    let right_area = chunks[1];
+
+    // ── Left panel: status list ──
     let staged: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Staged).collect();
     let unstaged: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Unstaged).collect();
     let untracked: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Untracked).collect();
@@ -443,8 +460,32 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
         .map(|(_, item)| item)
         .collect();
 
-    let list = List::new(items).block(panel("Git Status", true));
-    f.render_widget(list, area);
+    let list = List::new(items).block(panel("Git Status", !app.git_status_diff_focused));
+    f.render_widget(list, left_area);
+
+    // ── Right panel: diff ──
+    app.sync_git_status_diff_scroll(list_height);
+    let diff_title = app
+        .git_status_items
+        .get(app.git_status_cursor)
+        .map(|i| i.path.clone())
+        .unwrap_or_else(|| "No changes".to_string());
+    let diff_block = panel(&format!("Diff: {diff_title}"), app.git_status_diff_focused);
+    let diff_inner_width = diff_block.inner(right_area).width;
+    let cursor_line = if app.git_status_diff_focused {
+        Some(app.git_status_diff_cursor)
+    } else {
+        None
+    };
+    let diff_widget = Paragraph::new(build_diff_lines(
+        &app.git_status_diff_content,
+        cursor_line,
+        diff_inner_width,
+    ))
+    .block(diff_block)
+    .scroll((app.git_status_diff_scroll_offset as u16, 0))
+    .wrap(Wrap { trim: false });
+    f.render_widget(diff_widget, right_area);
 }
 
 fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> {
@@ -452,24 +493,28 @@ fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> 
     let is_selected = app.selected.contains(&abs_path);
     let marker = if is_selected { "✓ " } else { "  " };
 
-    let section_str = match item.section {
-        GitStatusSection::Staged => "M ",
-        GitStatusSection::Unstaged => "M ",
-        GitStatusSection::Untracked => "? ",
+    let (section_str, section_color) = match item.section {
+        GitStatusSection::Staged => ("M ", Color::Green),
+        GitStatusSection::Unstaged => ("M ", Color::Yellow),
+        GitStatusSection::Untracked => ("? ", Color::Red),
     };
 
     Line::from(vec![
         Span::styled(marker, Style::default().fg(theme::SELECTED).add_modifier(Modifier::BOLD)),
-        Span::styled(section_str, Style::default().fg(theme::MUTED)),
+        Span::styled(section_str, Style::default().fg(section_color)),
         Span::styled(item.path.clone(), Style::default().fg(theme::FG)),
     ])
 }
 
-fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, is_git_mode: bool) {
-    let hint_str = if is_git_mode {
-        "space select   s stage   d toggle diff   c copy   ? help   q quit "
-    } else {
-        "space select   c copy   ? help   q quit "
+fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, mode: AppMode) {
+    let hint_str = match mode {
+        AppMode::GitStatus => {
+            "space select   s stage   Tab switch   c copy   ? help   q quit "
+        }
+        AppMode::GitTree => {
+            "space select   d diff   c copy   ? help   q quit "
+        }
+        _ => "space select   c copy   ? help   q quit ",
     };
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -561,8 +606,9 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Enter", "Toggle expand"),
         ("Backspace", "Parent dir"),
         ("Space", "Select/Unselect"),
-        ("1", "Toggle git status"),
-        ("2/Tab", "Toggle git tree"),
+        ("1", "Git status mode"),
+        ("2", "Git tree mode"),
+        ("Tab", "Switch panel / exit git"),
         ("s", "Stage/Unstage (Git Status mode)"),
         ("d", "Toggle diff (Git mode)"),
         ("/ or Ctrl-f", "Search files"),
