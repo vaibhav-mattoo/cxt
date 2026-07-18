@@ -229,25 +229,60 @@ fn main() -> Result<()> {
     let stdin_is_piped = !atty::is(atty::Stream::Stdin);
     let mut args = args;
     let paths: Vec<String> = if let Some(pattern) = &args.rg {
-        let output = std::process::Command::new("rg")
-            .args(["-c", pattern])
-            .output()
-            .map_err(|e| anyhow::anyhow!("Failed to execute rg: {e}"))?;
+        // Pipe `git ls-files -z -- <paths>` into `xargs -0 rg -c` so ripgrep
+        // only searches git-tracked files in the specified paths.
+        // This safely handles spaces in filenames and avoids ARG_MAX limits.
+        let mut git_cmd = std::process::Command::new("git");
+        git_cmd.args(["ls-files", "-z"]);
+        if !args.paths.is_empty() {
+            git_cmd.arg("--");
+            git_cmd.args(&args.paths);
+        }
+
+        let mut git_child = git_cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to execute git ls-files: {e}"))?;
+
+        let git_stdout = git_child.stdout.take().unwrap();
+
+        let mut xargs_child = std::process::Command::new("xargs")
+            .args(["-0", "rg", "-c", "--", pattern])
+            .stdin(git_stdout)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to execute xargs/rg: {e}"))?;
+
+        let output = xargs_child
+            .wait_with_output()
+            .map_err(|e| anyhow::anyhow!("Failed to wait for rg: {e}"))?;
+
+        let _ = git_child.wait();
         let text = String::from_utf8_lossy(&output.stdout);
-        let mut paths = Vec::new();
+        use std::collections::BTreeMap;
+        let mut matches = BTreeMap::new();
         for line in text.lines() {
             if let Some((path, count_str)) = line.rsplit_once(':') {
                 let count: usize = count_str.parse().unwrap_or(0);
-                let noun = if count == 1 { "match" } else { "matches" };
-                println!("{path} ({count} {noun})");
-                paths.push(path.to_string());
+                matches.insert(path.to_string(), count);
             }
         }
-        if paths.is_empty() {
+        if matches.is_empty() {
             println!("No matches found.");
             return Ok(());
         }
-        paths
+        for (path, count) in &matches {
+            let noun = if *count == 1 { "match" } else { "matches" };
+            if atty::is(atty::Stream::Stdout) {
+                // ANSI colors: path = cyan, count = green
+                println!("\x1b[36m{path}\x1b[0m (\x1b[32m{count}\x1b[0m {noun})");
+            } else {
+                println!("{path} ({count} {noun})");
+            }
+        }
+        matches.into_keys().collect()
     } else if args.tui {
         // --tui explicitly requested: always launch interactive picker, ignore stdin.
         let outcome = tui::run_tui(args.relative, args.no_path, args.aider)?;

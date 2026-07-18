@@ -102,7 +102,9 @@ pub struct Args {
     #[arg(
         long = "rg",
         value_name = "PATTERN",
-        help = "Run ripgrep to find files matching PATTERN, print match counts, and aggregate them"
+        help = "Run ripgrep to find git-tracked files matching PATTERN, print match counts, \
+                and aggregate them. Optionally restrict search to provided paths \
+                (e.g. `cxt --rg PATTERN src/`)"
     )]
     pub rg: Option<String>,
 }
