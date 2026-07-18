@@ -17,7 +17,7 @@ use std::{
 use tui_tree_widget::{Tree, TreeItem};
 
 use super::theme;
-use crate::tui::app::{AppMode, AppState, DirItem};
+use crate::tui::app::{AppMode, AppState, DirItem, GitStatusItem, GitStatusSection};
 
 fn panel(title: &str, focused: bool) -> Block<'static> {
     Block::default()
@@ -59,10 +59,13 @@ pub fn draw(
     render_path_bar(f, app, chunks[0]);
     if app.mode == AppMode::GitTree {
         render_git_tree(f, app, chunks[1], inner_list_height as usize);
+    } else if app.mode == AppMode::GitStatus {
+        render_git_status(f, app, chunks[1], inner_list_height as usize);
     } else {
         render_file_list(f, app, chunks[1], inner_list_height as usize);
     }
-    render_status_bar(f, chunks[2], message, file_count, loc_count, app.mode == AppMode::GitTree);
+    let is_git_mode = app.mode == AppMode::GitTree || app.mode == AppMode::GitStatus;
+    render_status_bar(f, chunks[2], message, file_count, loc_count, is_git_mode);
     if app.show_help {
         render_help_overlay(f, f.area());
     }
@@ -375,9 +378,96 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
+fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
+    let staged: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Staged).collect();
+    let unstaged: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Unstaged).collect();
+    let untracked: Vec<(usize, &GitStatusItem)> = app.git_status_items.iter().enumerate().filter(|(_, i)| i.section == GitStatusSection::Untracked).collect();
+
+    let header_style = Style::default().fg(theme::MUTED).add_modifier(Modifier::BOLD);
+    let divider_style = Style::default().fg(theme::BORDER);
+
+    let mut visual_items: Vec<(Option<usize>, ListItem)> = Vec::new();
+
+    let push_header = |v: &mut Vec<(Option<usize>, ListItem)>, title: &str, count: usize| {
+        v.push((None, ListItem::new(Line::from(Span::styled(format!(" {title} ({count})"), header_style)))));
+        v.push((None, ListItem::new(Line::from(Span::styled(" ────────────────────────────────────────", divider_style)))));
+    };
+
+    push_header(&mut visual_items, "Staged Changes", staged.len());
+    if staged.is_empty() {
+        visual_items.push((None, ListItem::new(Line::from(Span::styled("   (none)", Style::default().fg(theme::MUTED))))));
+    } else {
+        for (idx, item) in &staged {
+            let is_cursor = *idx == app.git_status_cursor;
+            let line = build_git_status_line(app, item);
+            visual_items.push((Some(*idx), ListItem::new(line).style(if is_cursor { Style::default().bg(theme::CURSOR_BG) } else { Style::default() })));
+        }
+    }
+
+    push_header(&mut visual_items, "Unstaged Changes", unstaged.len());
+    if unstaged.is_empty() {
+        visual_items.push((None, ListItem::new(Line::from(Span::styled("   (none)", Style::default().fg(theme::MUTED))))));
+    } else {
+        for (idx, item) in &unstaged {
+            let is_cursor = *idx == app.git_status_cursor;
+            let line = build_git_status_line(app, item);
+            visual_items.push((Some(*idx), ListItem::new(line).style(if is_cursor { Style::default().bg(theme::CURSOR_BG) } else { Style::default() })));
+        }
+    }
+
+    push_header(&mut visual_items, "Untracked Files", untracked.len());
+    if untracked.is_empty() {
+        visual_items.push((None, ListItem::new(Line::from(Span::styled("   (none)", Style::default().fg(theme::MUTED))))));
+    } else {
+        for (idx, item) in &untracked {
+            let is_cursor = *idx == app.git_status_cursor;
+            let line = build_git_status_line(app, item);
+            visual_items.push((Some(*idx), ListItem::new(line).style(if is_cursor { Style::default().bg(theme::CURSOR_BG) } else { Style::default() })));
+        }
+    }
+
+    let selected_visual = visual_items.iter().position(|(idx, _)| *idx == Some(app.git_status_cursor)).unwrap_or(0);
+
+    let scroll_offset = if selected_visual < app.git_status_scroll_offset {
+        selected_visual
+    } else if selected_visual >= app.git_status_scroll_offset + list_height {
+        selected_visual + 1 - list_height
+    } else {
+        app.git_status_scroll_offset
+    };
+    app.git_status_scroll_offset = scroll_offset;
+
+    let items: Vec<ListItem> = visual_items.into_iter()
+        .skip(scroll_offset)
+        .take(list_height)
+        .map(|(_, item)| item)
+        .collect();
+
+    let list = List::new(items).block(panel("Git Status", true));
+    f.render_widget(list, area);
+}
+
+fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> {
+    let abs_path = app.git_file_abs_path(&item.path);
+    let is_selected = app.selected.contains(&abs_path);
+    let marker = if is_selected { "✓ " } else { "  " };
+
+    let section_str = match item.section {
+        GitStatusSection::Staged => "M ",
+        GitStatusSection::Unstaged => "M ",
+        GitStatusSection::Untracked => "? ",
+    };
+
+    Line::from(vec![
+        Span::styled(marker, Style::default().fg(theme::SELECTED).add_modifier(Modifier::BOLD)),
+        Span::styled(section_str, Style::default().fg(theme::MUTED)),
+        Span::styled(item.path.clone(), Style::default().fg(theme::FG)),
+    ])
+}
+
 fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, is_git_mode: bool) {
     let hint_str = if is_git_mode {
-        "space select   d toggle diff   c copy   ? help   q quit "
+        "space select   s stage   d toggle diff   c copy   ? help   q quit "
     } else {
         "space select   c copy   ? help   q quit "
     };
@@ -471,9 +561,11 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Enter", "Toggle expand"),
         ("Backspace", "Parent dir"),
         ("Space", "Select/Unselect"),
+        ("1", "Toggle git status"),
+        ("2/Tab", "Toggle git tree"),
+        ("s", "Stage/Unstage (Git Status mode)"),
         ("d", "Toggle diff (Git mode)"),
         ("/ or Ctrl-f", "Search files"),
-        ("Tab", "Toggle git tree"),
         ("?", "Toggle help"),
         ("c", "Confirm selection"),
         ("p", "Restore last selection"),

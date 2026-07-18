@@ -12,6 +12,20 @@ pub enum AppMode {
     SearchFocused,
     SearchNavigating,
     GitTree,
+    GitStatus,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum GitStatusSection {
+    Staged,
+    Unstaged,
+    Untracked,
+}
+
+#[derive(Clone)]
+pub struct GitStatusItem {
+    pub path: String,
+    pub section: GitStatusSection,
 }
 
 #[derive(Clone)]
@@ -92,13 +106,16 @@ pub struct AppState {
     pub git_files_scroll_offset: usize,
     pub git_panel_focused: bool,
     pub git_marked_commits: HashSet<String>,
-    git_base_selected: HashSet<PathBuf>,
+    pub(crate) git_base_selected: HashSet<PathBuf>,
     git_diff_cache: HashMap<String, Vec<String>>,
     pub show_git_diff: bool,
     pub git_diff_content: String,
     pub git_diff_scroll_offset: usize,
     pub git_diff_cursor: usize,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
+    pub git_status_items: Vec<GitStatusItem>,
+    pub git_status_cursor: usize,
+    pub git_status_scroll_offset: usize,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -147,6 +164,9 @@ impl AppState {
             git_diff_scroll_offset: 0,
             git_diff_cursor: 0,
             dir_select_cache: RefCell::new(HashMap::new()),
+            git_status_items: Vec::new(),
+            git_status_cursor: 0,
+            git_status_scroll_offset: 0,
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -174,7 +194,7 @@ impl AppState {
 
 // SelectionExt
 impl AppState {
-    fn invalidate_caches(&mut self) {
+    pub(crate) fn invalidate_caches(&mut self) {
         self.selected_file_count_cache = None;
         self.selected_loc_cache = None;
         self.dir_select_cache.get_mut().clear();
@@ -377,6 +397,44 @@ impl AppState {
         self.mode = AppMode::GitTree;
     }
 
+    pub fn enter_git_status_mode(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain=v1"])
+            .output();
+
+        let mut items = Vec::new();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    if line.len() < 3 { continue; }
+                    let x = line.chars().next().unwrap();
+                    let y = line.chars().nth(1).unwrap();
+                    let path = line[3..].to_string();
+                    let path = path.split(" -> ").last().unwrap_or(&path).to_string();
+
+                    if x == '?' && y == '?' {
+                        items.push(GitStatusItem { path, section: GitStatusSection::Untracked });
+                    } else {
+                        if x != ' ' && x != '?' {
+                            items.push(GitStatusItem { path: path.clone(), section: GitStatusSection::Staged });
+                        }
+                        if y != ' ' && y != '?' {
+                            items.push(GitStatusItem { path, section: GitStatusSection::Unstaged });
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.git_status_cursor >= items.len() {
+            self.git_status_cursor = items.len().saturating_sub(1);
+        }
+        self.git_status_items = items;
+        self.git_base_selected = self.selected.clone();
+        self.mode = AppMode::GitStatus;
+    }
+
     pub fn fetch_git_files(&mut self) {
         let hash = self
             .git_commits
@@ -417,7 +475,7 @@ impl AppState {
         files
     }
 
-    fn git_file_abs_path(&self, file: &str) -> PathBuf {
+    pub(crate) fn git_file_abs_path(&self, file: &str) -> PathBuf {
         env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(file)

@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButto
 use ratatui::layout::Position;
 use std::path::PathBuf;
 
-use crate::tui::app::{AppMode, AppState};
+use crate::tui::app::{AppMode, AppState, GitStatusSection};
 
 pub fn handle_key_event(
     app: &mut AppState,
@@ -17,7 +17,78 @@ pub fn handle_key_event(
         AppMode::SearchNavigating => handle_search_navigating(app, key_event, message),
         AppMode::Normal => handle_normal(app, key_event, message),
         AppMode::GitTree => handle_git_tree(app, key_event, message),
+        AppMode::GitStatus => handle_git_status(app, key_event, message),
     }
+}
+
+fn handle_git_status(
+    app: &mut AppState,
+    key_event: KeyEvent,
+    message: &mut String,
+) -> Option<Vec<String>> {
+    match key_event.code {
+        KeyCode::Tab | KeyCode::Char('1') | KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+        }
+        KeyCode::Char('2') => {
+            app.enter_git_tree_mode();
+        }
+        KeyCode::Char('q') => return Some(vec![]),
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(vec![])
+        }
+        KeyCode::Char('c') => {
+            if app.selected.is_empty() {
+                *message = "No files or directories selected!".to_string();
+            } else {
+                return Some(app.collect_selected_paths());
+            }
+        }
+        KeyCode::Char('s') => {
+            if let Some(item) = app.git_status_items.get(app.git_status_cursor).cloned() {
+                let path = &item.path;
+                match item.section {
+                    GitStatusSection::Staged => {
+                        let _ = std::process::Command::new("git")
+                            .args(["restore", "--staged", path])
+                            .output();
+                    }
+                    GitStatusSection::Unstaged | GitStatusSection::Untracked => {
+                        let _ = std::process::Command::new("git")
+                            .args(["add", path])
+                            .output();
+                    }
+                }
+                let old_cursor = app.git_status_cursor;
+                app.enter_git_status_mode();
+                app.git_status_cursor = old_cursor.min(app.git_status_items.len().saturating_sub(1));
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(item) = app.git_status_items.get(app.git_status_cursor).cloned() {
+                let path = app.git_file_abs_path(&item.path);
+                app.invalidate_caches();
+                if app.selected.remove(&path) {
+                    app.git_base_selected.remove(&path);
+                } else {
+                    app.selected.insert(path.clone());
+                    app.git_base_selected.insert(path);
+                }
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.git_status_cursor > 0 {
+                app.git_status_cursor -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.git_status_cursor + 1 < app.git_status_items.len() {
+                app.git_status_cursor += 1;
+            }
+        }
+        _ => {}
+    }
+    None
 }
 
 fn handle_git_tree(
@@ -26,11 +97,11 @@ fn handle_git_tree(
     message: &mut String,
 ) -> Option<Vec<String>> {
     match key_event.code {
-        KeyCode::Tab => {
-            app.git_panel_focused = !app.git_panel_focused;
-        }
-        KeyCode::Esc => {
+        KeyCode::Tab | KeyCode::Char('2') | KeyCode::Esc => {
             app.mode = AppMode::Normal;
+        }
+        KeyCode::Char('1') => {
+            app.enter_git_status_mode();
         }
         KeyCode::Char('q') => return Some(vec![]),
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -240,7 +311,7 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                 }
             }
         }
-        MouseEventKind::ScrollDown => {
+       MouseEventKind::ScrollDown => {
             if app.mode == AppMode::Normal {
                 app.tree_state.scroll_down(1);
             } else if app.mode == AppMode::GitTree {
@@ -251,6 +322,10 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                     }
                 } else if app.git_files_cursor + 1 < app.git_files.len() {
                     app.git_files_cursor += 1;
+                }
+            } else if app.mode == AppMode::GitStatus {
+                if app.git_status_cursor + 1 < app.git_status_items.len() {
+                    app.git_status_cursor += 1;
                 }
             } else if app.search_cursor + 1 < app.search_results.len() {
                 app.search_cursor += 1;
@@ -268,6 +343,10 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                     }
                 } else if app.git_files_cursor > 0 {
                     app.git_files_cursor -= 1;
+                }
+            } else if app.mode == AppMode::GitStatus {
+                if app.git_status_cursor > 0 {
+                    app.git_status_cursor -= 1;
                 }
             } else if app.search_cursor > 0 {
                 app.search_cursor -= 1;
@@ -364,8 +443,11 @@ fn handle_normal(
                 "No previous selection in this session.".to_string()
             };
         }
-        KeyCode::Tab => {
+       KeyCode::Tab | KeyCode::Char('2') => {
             app.enter_git_tree_mode();
+        }
+        KeyCode::Char('1') => {
+            app.enter_git_status_mode();
         }
         _ => {}
     }
