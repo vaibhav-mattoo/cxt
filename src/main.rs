@@ -228,7 +228,27 @@ fn main() -> Result<()> {
     }
     let stdin_is_piped = !atty::is(atty::Stream::Stdin);
     let mut args = args;
-    let paths: Vec<String> = if args.tui {
+    let paths: Vec<String> = if let Some(pattern) = &args.rg {
+        let output = std::process::Command::new("rg")
+            .args(["-c", pattern])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to execute rg: {e}"))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut paths = Vec::new();
+        for line in text.lines() {
+            if let Some((path, count_str)) = line.rsplit_once(':') {
+                let count: usize = count_str.parse().unwrap_or(0);
+                let noun = if count == 1 { "match" } else { "matches" };
+                println!("{path} ({count} {noun})");
+                paths.push(path.to_string());
+            }
+        }
+        if paths.is_empty() {
+            println!("No matches found.");
+            return Ok(());
+        }
+        paths
+    } else if args.tui {
         // --tui explicitly requested: always launch interactive picker, ignore stdin.
         let outcome = tui::run_tui(args.relative, args.no_path, args.aider)?;
         args.relative = outcome.relative;
@@ -369,14 +389,16 @@ fn main() -> Result<()> {
         }
 
         cw.finish()?;
-        let cwd = std::env::current_dir().ok();
-        for p in &paths {
-            let display = cwd
-                .as_ref()
-                .and_then(|c| std::path::Path::new(p).strip_prefix(c).ok())
-                .map(|rel| rel.display().to_string())
-                .unwrap_or_else(|| p.clone());
-            println!("  {display}");
+        if args.rg.is_none() {
+            let cwd = std::env::current_dir().ok();
+            for p in &paths {
+                let display = cwd
+                    .as_ref()
+                    .and_then(|c| std::path::Path::new(p).strip_prefix(c).ok())
+                    .map(|rel| rel.display().to_string())
+                    .unwrap_or_else(|| p.clone());
+                println!("  {display}");
+            }
         }
         println!(
             "Copied {} tokens from {} files to clipboard.",

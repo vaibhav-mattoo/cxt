@@ -98,6 +98,13 @@ pub struct Args {
         help = "Copy git status modified files to clipboard. Use --st N for files changed in last N commits."
     )]
     pub st: Option<u8>,
+
+    #[arg(
+        long = "rg",
+        value_name = "PATTERN",
+        help = "Run ripgrep to find files matching PATTERN, print match counts, and aggregate them"
+    )]
+    pub rg: Option<String>,
 }
 
 impl Args {
