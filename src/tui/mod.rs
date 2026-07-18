@@ -5,6 +5,7 @@ mod theme;
 
 use anyhow::{Context, Result};
 use crossterm::{
+    cursor::{Hide, Show},
     event::{self, Event},
     execute as crossterm_execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -61,15 +62,19 @@ pub struct TuiOutcome {
 pub fn run_tui(relative: bool, no_path: bool, aider: bool) -> Result<TuiOutcome> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    crossterm_execute!(stdout, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    crossterm_execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture,
+        Hide
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
     let res = tui_main(&mut terminal, relative, no_path, aider);
-
     disable_raw_mode()?;
     crossterm_execute!(
         io::stdout(),
+        Show,
         LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture
     )?;

@@ -1,6 +1,6 @@
 use pathdiff::diff_paths;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Margin, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -170,14 +170,28 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
             (path, title_str, Style::default())
         };
 
+    let block = panel(
+        &title_str,
+        app.mode != AppMode::Normal && app.mode != AppMode::GitStatus,
+    );
+    let inner = block.inner(area);
     let path_widget = Paragraph::new(path)
-        .block(panel(
-            &title_str,
-            app.mode != AppMode::Normal && app.mode != AppMode::GitStatus,
-        ))
+        .block(block)
         .style(path_style)
         .wrap(Wrap { trim: true });
     f.render_widget(path_widget, area);
+    if app.mode == AppMode::SearchFocused {
+        // Position the native cursor right after the typed query text.
+        // "Search: " prefix is 8 chars; clamp so a very long query can't
+        // push the cursor outside the panel.
+        let prefix_len = 8u16;
+        let cursor_x = inner
+            .x
+            .saturating_add(prefix_len)
+            .saturating_add(app.search_query.chars().count() as u16)
+            .min(inner.x + inner.width.saturating_sub(1));
+        f.set_cursor_position(Position::new(cursor_x, inner.y));
+    }
 }
 
 fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
