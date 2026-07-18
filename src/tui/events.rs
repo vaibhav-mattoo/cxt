@@ -319,6 +319,9 @@ fn handle_rg_navigating(
                 return Some(app.collect_selected_paths());
             }
         }
+        KeyCode::Tab => {
+            app.rg_files_focused = !app.rg_files_focused;
+        }
         KeyCode::Char('y') => {
             if let Some(result) = app.rg_results.get(app.rg_cursor) {
                 let text = format!(
@@ -349,13 +352,19 @@ fn handle_rg_navigating(
                 app.toggle_selection(path, false);
             }
         }
-        KeyCode::Up | KeyCode::Char('k') if app.rg_cursor > 0 => {
-            app.rg_cursor -= 1;
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.rg_files_focused {
+                app.rg_cursor_prev_file();
+            } else if app.rg_cursor > 0 {
+                app.rg_cursor -= 1;
+            }
         }
-        KeyCode::Down | KeyCode::Char('j')
-            if app.rg_cursor + 1 < app.rg_results.len() =>
-        {
-            app.rg_cursor += 1;
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.rg_files_focused {
+                app.rg_cursor_next_file();
+            } else if app.rg_cursor + 1 < app.rg_results.len() {
+                app.rg_cursor += 1;
+            }
         }
         KeyCode::Char('p') => {
             let added = app.restore_last_selection();

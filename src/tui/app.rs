@@ -152,6 +152,10 @@ pub struct AppState {
     pub rg_results: Vec<RgResult>,
     pub rg_cursor: usize,
     pub rg_scroll_offset: usize,
+    /// When true, keyboard navigation in rg mode moves the cursor between
+    /// files (left panel) instead of between individual match lines (right
+    /// panel). Toggled with Tab.
+    pub rg_files_focused: bool,
 }
 
 impl AppState {
@@ -216,6 +220,7 @@ impl AppState {
             rg_results: Vec::new(),
             rg_cursor: 0,
             rg_scroll_offset: 0,
+            rg_files_focused: false,
         };
         app.select_first_entry();
         Ok(app)
@@ -248,26 +253,24 @@ impl AppState {
         self.rg_results.clear();
         self.rg_cursor = 0;
         self.rg_scroll_offset = 0;
+        self.rg_files_focused = false;
     }
-
     pub fn exit_rg(&mut self) {
         self.mode = AppMode::Normal;
         self.rg_query.clear();
         self.rg_results.clear();
         self.rg_cursor = 0;
         self.rg_scroll_offset = 0;
+        self.rg_files_focused = false;
     }
-
     pub fn push_rg_char(&mut self, c: char) {
         self.rg_query.push(c);
         self.update_rg();
     }
-
     pub fn pop_rg_char(&mut self) {
         self.rg_query.pop();
         self.update_rg();
     }
-
     pub fn update_rg(&mut self) {
         if self.rg_query.is_empty() {
             self.rg_results.clear();
@@ -275,21 +278,24 @@ impl AppState {
             self.rg_scroll_offset = 0;
             return;
         }
-
         let git_child = std::process::Command::new("git")
             .args(["ls-files", "-z", "--"])
             .arg(&self.root_dir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn();
-
         let output = match git_child {
             Ok(mut git_child) => {
                 let git_stdout = git_child.stdout.take().unwrap();
                 let result = std::process::Command::new("xargs")
                     .args([
-                        "-0", "rg", "--line-number", "--no-heading",
-                        "--color=never", "--", &self.rg_query,
+                        "-0",
+                        "rg",
+                        "--line-number",
+                        "--no-heading",
+                        "--color=never",
+                        "--",
+                        &self.rg_query,
                     ])
                     .stdin(git_stdout)
                     .stdout(std::process::Stdio::piped())
@@ -303,7 +309,6 @@ impl AppState {
             }
             Err(_) => String::new(),
         };
-
         let query_lower = self.rg_query.to_lowercase();
         let query_char_count = self.rg_query.chars().count();
         let mut parsed = Vec::new();
@@ -313,7 +318,6 @@ impl AppState {
                 let path = PathBuf::from(parts[0]);
                 let line_num: usize = parts[1].parse().unwrap_or(0);
                 let content = parts[2];
-
                 let mut indices = Vec::new();
                 let content_lower = content.to_lowercase();
                 let mut start = 0;
@@ -324,7 +328,6 @@ impl AppState {
                     }
                     start = abs + query_char_count;
                 }
-
                 parsed.push(RgResult {
                     path,
                     line_number: line_num,
@@ -337,31 +340,49 @@ impl AppState {
         self.rg_cursor = 0;
         self.rg_scroll_offset = 0;
     }
-
-    pub fn sync_rg_scroll(&mut self, visible_height: usize) {
+    /// Clamp the cursor to valid bounds. The scroll offset (in grouped/visual
+    /// row space, i.e. including file-header rows) is computed directly by
+    /// the render layer, which is the only place that knows the current
+    /// grouping layout.
+    pub fn sync_rg_scroll(&mut self, _visible_height: usize) {
         let len = self.rg_results.len();
         if self.rg_cursor >= len {
             self.rg_cursor = len.saturating_sub(1);
         }
-        if len <= visible_height {
-            self.rg_scroll_offset = 0;
+    }
+    /// Move the cursor to the first match of the previous file group
+    /// (used when the left/Files panel has focus).
+    pub fn rg_cursor_prev_file(&mut self) {
+        let Some(current) = self.rg_results.get(self.rg_cursor).map(|r| r.path.clone()) else {
+            return;
+        };
+        let mut start = self.rg_cursor;
+        while start > 0 && self.rg_results[start - 1].path == current {
+            start -= 1;
+        }
+        if start == 0 {
             return;
         }
-        let top_margin = 2;
-        let bottom_margin = 2;
-        if self.rg_cursor < self.rg_scroll_offset + top_margin
-            && self.rg_scroll_offset > 0
-        {
-            self.rg_scroll_offset = self.rg_cursor.saturating_sub(top_margin);
-        } else if self.rg_cursor + bottom_margin >= self.rg_scroll_offset + visible_height
-            && self.rg_scroll_offset + visible_height < len
-        {
-            self.rg_scroll_offset =
-                (self.rg_cursor + bottom_margin + 1).saturating_sub(visible_height);
+        let prev_path = self.rg_results[start - 1].path.clone();
+        let mut prev_start = start - 1;
+        while prev_start > 0 && self.rg_results[prev_start - 1].path == prev_path {
+            prev_start -= 1;
         }
-        self.rg_scroll_offset = self
-            .rg_scroll_offset
-            .min(len.saturating_sub(visible_height));
+        self.rg_cursor = prev_start;
+    }
+    /// Move the cursor to the first match of the next file group
+    /// (used when the left/Files panel has focus).
+    pub fn rg_cursor_next_file(&mut self) {
+        let Some(current) = self.rg_results.get(self.rg_cursor).map(|r| r.path.clone()) else {
+            return;
+        };
+        let mut idx = self.rg_cursor;
+        while idx < self.rg_results.len() && self.rg_results[idx].path == current {
+            idx += 1;
+        }
+        if idx < self.rg_results.len() {
+            self.rg_cursor = idx;
+        }
     }
 }
 
@@ -537,7 +558,11 @@ impl AppState {
                             .trim()
                             .to_string();
 
-                        GitCommit { display, hash, refs }
+                        GitCommit {
+                            display,
+                            hash,
+                            refs,
+                        }
                     })
                     .collect();
             } else {
@@ -580,20 +605,31 @@ impl AppState {
             if o.status.success() {
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 for line in stdout.lines() {
-                    if line.len() < 3 { continue; }
+                    if line.len() < 3 {
+                        continue;
+                    }
                     let x = line.chars().next().unwrap();
                     let y = line.chars().nth(1).unwrap();
                     let path = line[3..].to_string();
                     let path = path.split(" -> ").last().unwrap_or(&path).to_string();
 
                     if x == '?' && y == '?' {
-                        items.push(GitStatusItem { path, section: GitStatusSection::Untracked });
+                        items.push(GitStatusItem {
+                            path,
+                            section: GitStatusSection::Untracked,
+                        });
                     } else {
                         if x != ' ' && x != '?' {
-                            items.push(GitStatusItem { path: path.clone(), section: GitStatusSection::Staged });
+                            items.push(GitStatusItem {
+                                path: path.clone(),
+                                section: GitStatusSection::Staged,
+                            });
                         }
                         if y != ' ' && y != '?' {
-                            items.push(GitStatusItem { path, section: GitStatusSection::Unstaged });
+                            items.push(GitStatusItem {
+                                path,
+                                section: GitStatusSection::Unstaged,
+                            });
                         }
                     }
                 }
@@ -790,16 +826,12 @@ impl AppState {
         };
 
         let output = match item.section {
-            GitStatusSection::Staged => {
-                std::process::Command::new("git")
-                    .args(["diff", "--cached", "--", &item.path])
-                    .output()
-            }
-            GitStatusSection::Unstaged => {
-                std::process::Command::new("git")
-                    .args(["diff", "--", &item.path])
-                    .output()
-            }
+            GitStatusSection::Staged => std::process::Command::new("git")
+                .args(["diff", "--cached", "--", &item.path])
+                .output(),
+            GitStatusSection::Unstaged => std::process::Command::new("git")
+                .args(["diff", "--", &item.path])
+                .output(),
             GitStatusSection::Untracked => {
                 let abs_path = self.git_file_abs_path(&item.path);
                 match std::fs::read_to_string(&abs_path) {
@@ -851,7 +883,8 @@ impl AppState {
         }
         if self.git_status_diff_cursor < self.git_status_diff_scroll_offset {
             self.git_status_diff_scroll_offset = self.git_status_diff_cursor;
-        } else if self.git_status_diff_cursor >= self.git_status_diff_scroll_offset + visible_height {
+        } else if self.git_status_diff_cursor >= self.git_status_diff_scroll_offset + visible_height
+        {
             self.git_status_diff_scroll_offset = self.git_status_diff_cursor + 1 - visible_height;
         }
         self.git_status_diff_scroll_offset = self
@@ -876,7 +909,15 @@ impl AppState {
         }
 
         let output = std::process::Command::new("git")
-            .args(["diff-tree", "--no-commit-id", "-p", "--root", &hash, "--", &file])
+            .args([
+                "diff-tree",
+                "--no-commit-id",
+                "-p",
+                "--root",
+                &hash,
+                "--",
+                &file,
+            ])
             .output();
 
         self.git_diff_content = match output {
@@ -1215,7 +1256,9 @@ pub fn read_dir_sorted(dir: &PathBuf, respect_gitignore: bool) -> io::Result<Vec
         })
         .collect();
     entries.sort_unstable_by(|a, b| {
-        (!a.is_dir()).cmp(&(!b.is_dir())).then_with(|| a.file_name().cmp(b.file_name()))
+        (!a.is_dir())
+            .cmp(&(!b.is_dir()))
+            .then_with(|| a.file_name().cmp(b.file_name()))
     });
     Ok(entries)
 }
