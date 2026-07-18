@@ -45,6 +45,22 @@ fn handle_git_status(
         }
         return None;
     }
+    if let Some(branch) = app.pending_branch_switch.clone() {
+        match key_event.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let _ = std::process::Command::new("git")
+                    .args(["switch", &branch])
+                    .output();
+                app.pending_branch_switch = None;
+                app.enter_git_status_mode();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_branch_switch = None;
+            }
+            _ => {}
+        }
+        return None;
+    }
     match key_event.code {
         KeyCode::Tab => {
             app.git_status_diff_focused = !app.git_status_diff_focused;
@@ -109,12 +125,19 @@ fn handle_git_status(
         KeyCode::Enter => {
             let items_len = app.git_status_items.len();
             if app.git_status_cursor >= items_len {
-                if let Some(stash) = app
-                    .git_stash_items
-                    .get(app.git_status_cursor - items_len)
-                    .cloned()
-                {
-                    app.pending_stash_pop = Some(stash.stash_ref.clone());
+                let after_items_idx = app.git_status_cursor - items_len;
+                let stash_len = app.git_stash_items.len();
+                if after_items_idx < stash_len {
+                    if let Some(stash) = app.git_stash_items.get(after_items_idx).cloned() {
+                        app.pending_stash_pop = Some(stash.stash_ref.clone());
+                    }
+                } else {
+                    let branch_idx = after_items_idx - stash_len;
+                    if let Some(branch) = app.git_branch_items.get(branch_idx).cloned() {
+                        if !branch.is_current {
+                            app.pending_branch_switch = Some(branch.name.clone());
+                        }
+                    }
                 }
             }
         }

@@ -78,6 +78,9 @@ pub fn draw(
             .unwrap_or_default();
         render_confirm_overlay(f, f.area(), &stash_ref, &stash_message);
     }
+    if let Some(branch) = app.pending_branch_switch.clone() {
+        render_branch_switch_overlay(f, f.area(), &branch);
+    }
     inner_list_height
 }
 
@@ -105,6 +108,52 @@ fn render_confirm_overlay(f: &mut Frame, area: Rect, stash_ref: &str, stash_mess
         )),
         Line::from(Span::styled(
             stash_message.to_string(),
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "y",
+                Style::default()
+                    .fg(theme::SELECTED)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" confirm    ", Style::default().fg(theme::MUTED)),
+            Span::styled(
+                "n / Esc",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" cancel", Style::default().fg(theme::MUTED)),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+}
+
+/// Centered confirmation modal for branch switching.
+fn render_branch_switch_overlay(f: &mut Frame, area: Rect, branch: &str) {
+    let modal = centered_rect(46, 24, area);
+    f.render_widget(Clear, modal);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER_FOCUS).add_modifier(Modifier::BOLD))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(
+            " Confirm Branch Switch ",
+            Style::default().fg(theme::BORDER_FOCUS).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(modal);
+    f.render_widget(block, modal);
+
+    let lines = vec![
+        Line::from(Span::styled(
+            format!("Switch to branch '{branch}'?"),
+            Style::default().fg(theme::FG).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Uncommitted changes may be carried over or conflict.",
             Style::default().fg(theme::MUTED),
         )),
         Line::from(""),
@@ -530,6 +579,30 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
         }
     }
 
+    push_header(&mut visual_items, "Branches", app.git_branch_items.len());
+    if app.git_branch_items.is_empty() {
+        visual_items.push((None, ListItem::new(Line::from(Span::styled("   (none)", Style::default().fg(theme::MUTED))))));
+    } else {
+        for (i, branch) in app.git_branch_items.iter().enumerate() {
+            let idx = items_len + app.git_stash_items.len() + i;
+            let is_cursor = idx == app.git_status_cursor;
+            let marker = if branch.is_current { "* " } else { "  " };
+            let name_style = if branch.is_current {
+                Style::default().fg(theme::SELECTED).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::FG)
+            };
+            let line = Line::from(vec![
+                Span::styled(
+                    marker.to_string(),
+                    Style::default().fg(theme::SELECTED).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(branch.name.clone(), name_style),
+            ]);
+            visual_items.push((Some(idx), ListItem::new(line).style(if is_cursor { Style::default().bg(theme::CURSOR_BG) } else { Style::default() })));
+        }
+    }
+
     let selected_visual = visual_items.iter().position(|(idx, _)| *idx == Some(app.git_status_cursor)).unwrap_or(0);
 
     let scroll_offset = if selected_visual < app.git_status_scroll_offset {
@@ -548,7 +621,9 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
         .collect();
 
     let list = List::new(items).block(panel(
-        if app.pending_stash_pop.is_some() { "Git Status — confirm pop" } else { "Git Status" },
+        if app.pending_stash_pop.is_some() { "Git Status — confirm pop" }
+        else if app.pending_branch_switch.is_some() { "Git Status — confirm switch" }
+        else { "Git Status" },
         !app.git_status_diff_focused,
     ));
     f.render_widget(list, left_area);
@@ -561,10 +636,20 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
             .map(|i| i.path.clone())
             .unwrap_or_else(|| "No changes".to_string())
     } else {
-        app.git_stash_items
-            .get(app.git_status_cursor - items_len)
-            .map(|s| format!("{} {}", s.stash_ref, s.message))
-            .unwrap_or_else(|| "No stash".to_string())
+        let after_items_idx = app.git_status_cursor - items_len;
+        let stash_len = app.git_stash_items.len();
+        if after_items_idx < stash_len {
+            app.git_stash_items
+                .get(after_items_idx)
+                .map(|s| format!("{} {}", s.stash_ref, s.message))
+                .unwrap_or_else(|| "No stash".to_string())
+        } else {
+            let branch_idx = after_items_idx - stash_len;
+            app.git_branch_items
+                .get(branch_idx)
+                .map(|b| format!("branch: {}", b.name))
+                .unwrap_or_else(|| "No branch".to_string())
+        }
     };
     let diff_block = panel(&format!("Diff: {diff_title}"), app.git_status_diff_focused);
     let diff_inner_width = diff_block.inner(right_area).width;
@@ -714,7 +799,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Tab", "Switch panel / exit git"),
         ("s", "Stage/Unstage (Git Status mode)"),
         ("z", "Stash changes (Git Status mode)"),
-        ("Enter", "Pop stash (on stash item)"),
+        ("Enter", "Pop stash / Switch branch"),
         ("d", "Toggle diff (Git mode)"),
         ("/ or Ctrl-f", "Search files"),
         ("?", "Toggle help"),

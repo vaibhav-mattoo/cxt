@@ -35,6 +35,12 @@ pub struct GitStashItem {
 }
 
 #[derive(Clone)]
+pub struct GitBranchItem {
+    pub name: String,
+    pub is_current: bool,
+}
+
+#[derive(Clone)]
 pub struct SearchResult {
     pub path: PathBuf,
     pub display_name: String,
@@ -129,6 +135,8 @@ pub struct AppState {
     pub git_status_diff_focused: bool,
     pub git_stash_items: Vec<GitStashItem>,
     pub pending_stash_pop: Option<String>,
+    pub git_branch_items: Vec<GitBranchItem>,
+    pub pending_branch_switch: Option<String>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
 }
 
@@ -187,6 +195,8 @@ impl AppState {
             git_status_diff_focused: false,
             git_stash_items: Vec::new(),
             pending_stash_pop: None,
+            git_branch_items: Vec::new(),
+            pending_branch_switch: None,
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
         };
         app.select_first_entry();
@@ -448,7 +458,8 @@ impl AppState {
         }
 
         self.fetch_git_stash_list();
-        let total = items.len() + self.git_stash_items.len();
+        self.fetch_git_branch_list();
+        let total = items.len() + self.git_stash_items.len() + self.git_branch_items.len();
         if self.git_status_cursor >= total {
             self.git_status_cursor = total.saturating_sub(1);
         }
@@ -459,6 +470,7 @@ impl AppState {
         self.git_status_diff_focused = false;
         self.git_base_selected = self.selected.clone();
         self.pending_stash_pop = None;
+        self.pending_branch_switch = None;
         self.mode = AppMode::GitStatus;
         self.fetch_git_status_diff();
     }
@@ -486,9 +498,34 @@ impl AppState {
         self.git_stash_items = items;
     }
 
+    /// Refresh the branch list (used on entering Git Status mode).
+    pub fn fetch_git_branch_list(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["branch", "--format=%(HEAD)%00%(refname:short)"])
+            .output();
+        let mut items = Vec::new();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    let mut parts = line.splitn(2, '\0');
+                    let head = parts.next().unwrap_or("").trim();
+                    let name = parts.next().unwrap_or("").to_string();
+                    if !name.is_empty() {
+                        items.push(GitBranchItem {
+                            name,
+                            is_current: head == "*",
+                        });
+                    }
+                }
+            }
+        }
+        self.git_branch_items = items;
+    }
+
     /// Total number of navigable rows in Git Status mode (file items + stashes).
     pub fn git_status_total_len(&self) -> usize {
-        self.git_status_items.len() + self.git_stash_items.len()
+        self.git_status_items.len() + self.git_stash_items.len() + self.git_branch_items.len()
     }
 
     pub fn fetch_git_files(&mut self) {
@@ -542,28 +579,62 @@ impl AppState {
     pub fn fetch_git_status_diff(&mut self) {
         let items_len = self.git_status_items.len();
         if self.git_status_cursor >= items_len {
-            let stash_idx = self.git_status_cursor - items_len;
-            let Some(stash) = self.git_stash_items.get(stash_idx).cloned() else {
-                self.git_status_diff_content = "No changes in working tree.".to_string();
+            let after_items_idx = self.git_status_cursor - items_len;
+            let stash_len = self.git_stash_items.len();
+
+            if after_items_idx < stash_len {
+                let stash = &self.git_stash_items[after_items_idx];
+                let output = std::process::Command::new("git")
+                    .args(["stash", "show", "-p", &stash.stash_ref])
+                    .output();
+                self.git_status_diff_content = match output {
+                    Ok(o) if o.status.success() => {
+                        let text = String::from_utf8_lossy(&o.stdout).to_string();
+                        if text.is_empty() {
+                            "(no textual diff)".to_string()
+                        } else {
+                            text
+                        }
+                    }
+                    Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+                    Err(e) => format!("Failed to run git stash show: {e}"),
+                };
                 self.git_status_diff_scroll_offset = 0;
                 self.git_status_diff_cursor = 0;
                 return;
-            };
-            let output = std::process::Command::new("git")
-                .args(["stash", "show", "-p", &stash.stash_ref])
-                .output();
-            self.git_status_diff_content = match output {
-                Ok(o) if o.status.success() => {
-                    let text = String::from_utf8_lossy(&o.stdout).to_string();
-                    if text.is_empty() {
-                        "(no textual diff)".to_string()
-                    } else {
-                        text
-                    }
+            }
+
+            let branch_idx = after_items_idx - stash_len;
+            if branch_idx < self.git_branch_items.len() {
+                let branch = &self.git_branch_items[branch_idx];
+                if branch.is_current {
+                    self.git_status_diff_content = format!(
+                        "Already on branch '{}'.\n\nSelect another branch and press Enter to switch.",
+                        branch.name
+                    );
+                } else {
+                    let output = std::process::Command::new("git")
+                        .args(["log", "--oneline", "-20", &branch.name])
+                        .output();
+                    self.git_status_diff_content = match output {
+                        Ok(o) if o.status.success() => {
+                            let text = String::from_utf8_lossy(&o.stdout).to_string();
+                            if text.is_empty() {
+                                format!("(no commits on branch '{}')", branch.name)
+                            } else {
+                                format!("Recent commits on '{}':\n\n{}", branch.name, text)
+                            }
+                        }
+                        Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+                        Err(e) => format!("Failed to run git log: {e}"),
+                    };
                 }
-                Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
-                Err(e) => format!("Failed to run git stash show: {e}"),
-            };
+                self.git_status_diff_scroll_offset = 0;
+                self.git_status_diff_cursor = 0;
+                return;
+            }
+
+            self.git_status_diff_content = "No changes in working tree.".to_string();
             self.git_status_diff_scroll_offset = 0;
             self.git_status_diff_cursor = 0;
             return;
