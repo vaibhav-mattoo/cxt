@@ -7,7 +7,11 @@ pub trait Formatter: Send + Sync {
     fn document_end(&self) -> &'static str {
         ""
     }
-    fn write_file_header(&self, path: &Path, writer: &mut dyn std::io::Write) -> std::io::Result<()>;
+    fn write_file_header(
+        &self,
+        path: &Path,
+        writer: &mut dyn std::io::Write,
+    ) -> std::io::Result<()>;
     fn file_footer(&self) -> &'static str;
 }
 
@@ -92,7 +96,11 @@ impl XmlFormatter {
         } else {
             None
         };
-        Self { no_path, relative, cwd }
+        Self {
+            no_path,
+            relative,
+            cwd,
+        }
     }
 }
 
@@ -105,7 +113,11 @@ impl Formatter for XmlFormatter {
         "</context>\n"
     }
 
-    fn write_file_header(&self, path: &Path, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn write_file_header(
+        &self,
+        path: &Path,
+        writer: &mut dyn std::io::Write,
+    ) -> std::io::Result<()> {
         if self.no_path {
             writer.write_all(b"<file>\n")
         } else {
@@ -132,12 +144,20 @@ impl MarkdownFormatter {
         } else {
             None
         };
-        Self { no_path, relative, cwd }
+        Self {
+            no_path,
+            relative,
+            cwd,
+        }
     }
 }
 
 impl Formatter for MarkdownFormatter {
-    fn write_file_header(&self, path: &Path, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn write_file_header(
+        &self,
+        path: &Path,
+        writer: &mut dyn std::io::Write,
+    ) -> std::io::Result<()> {
         let lang = language_for_extension(path);
         if self.no_path {
             writeln!(writer, "```{lang}")
@@ -152,7 +172,83 @@ impl Formatter for MarkdownFormatter {
     }
 }
 
-pub fn build_formatter(choice: FormatChoice, no_path: bool, relative: bool) -> Box<dyn Formatter> {
+const AIDER_PATCH_BLOCK: &str = r#"<patch method="aider">
+Please apply changes using this aider style format all changed in single code block
+```
+// src/filename1.rs
+<<<<<<< SEARCH
+[exact original lines (include enough context to be unique, avoid too thin blocks)]
+=======
+[modified lines]
+>>>>>>> REPLACE
+ // src/filename2.rs
+<<<<<<< SEARCH
+[exact original lines (include enough context to be unique, avoid too thin blocks)]
+=======
+[modified lines]
+>>>>>>> REPLACE
+```
+</patch>
+</context>
+"#;
+
+pub struct AiderFormatter {
+    no_path: bool,
+    relative: bool,
+    cwd: Option<std::path::PathBuf>,
+}
+
+impl AiderFormatter {
+    pub fn new(no_path: bool, relative: bool) -> Self {
+        let cwd = if relative {
+            std::env::current_dir().ok()
+        } else {
+            None
+        };
+        Self {
+            no_path,
+            relative,
+            cwd,
+        }
+    }
+}
+
+impl Formatter for AiderFormatter {
+    fn document_start(&self) -> &'static str {
+        "<context>\n"
+    }
+
+    fn document_end(&self) -> &'static str {
+        AIDER_PATCH_BLOCK
+    }
+
+    fn write_file_header(
+        &self,
+        path: &Path,
+        writer: &mut dyn std::io::Write,
+    ) -> std::io::Result<()> {
+        if self.no_path {
+            writer.write_all(b"<file>\n")
+        } else {
+            let resolved = resolve_display(path, self.relative, self.cwd.as_deref());
+            writeln!(writer, "<file path=\"{resolved}\">")
+        }
+    }
+
+    fn file_footer(&self) -> &'static str {
+        "\n</file>\n"
+    }
+}
+
+pub fn build_formatter(
+    choice: FormatChoice,
+    no_path: bool,
+    relative: bool,
+    aider: bool,
+) -> Box<dyn Formatter> {
+    if aider {
+        return Box::new(AiderFormatter::new(no_path, relative));
+    }
     match choice {
         FormatChoice::Xml => Box::new(XmlFormatter::new(no_path, relative)),
         FormatChoice::Markdown => Box::new(MarkdownFormatter::new(no_path, relative)),

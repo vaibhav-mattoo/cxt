@@ -193,7 +193,7 @@ fn main() -> Result<()> {
         for p in &paths {
             println!("  {p}");
         }
-        let fmt = formatter::build_formatter(args.format, args.no_path, args.relative);
+        let fmt = formatter::build_formatter(args.format, args.no_path, args.relative, args.aider);
         let mut aggregator = ContentAggregator::new(
             fmt,
             args.hidden,
@@ -294,7 +294,7 @@ fn main() -> Result<()> {
             std::process::exit(1);
         });
 
-    let fmt = formatter::build_formatter(args.format, args.no_path, args.relative);
+    let fmt = formatter::build_formatter(args.format, args.no_path, args.relative, args.aider);
     let mut aggregator = ContentAggregator::new(
         fmt,
         args.hidden,

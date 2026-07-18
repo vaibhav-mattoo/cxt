@@ -71,6 +71,13 @@ pub struct Args {
 
     #[arg(
         long,
+        help = "Append aider-style SEARCH/REPLACE patch instructions to the output \
+                (overrides --format)"
+    )]
+    pub aider: bool,
+
+    #[arg(
+        long,
         value_enum,
         default_value = "xml",
         help = "Output format: xml (default) wraps files in <file path=\"...\"> tags \
