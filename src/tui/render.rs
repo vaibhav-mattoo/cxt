@@ -807,11 +807,16 @@ fn render_rg(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) 
             match_files.push(result.path.as_path());
         }
     }
-    let current_path = app.rg_results.get(app.rg_cursor).map(|r| r.path.as_path());
-    let current_idx = current_path
-        .and_then(|p| match_files.iter().position(|x| *x == p))
-        .unwrap_or(0);
     let list_len = match_files.len();
+    // Files panel reflects rg_file_cursor only — it's fully decoupled from
+    // rg_cursor (the right/match panel). Browsing files never moves the
+    // match panel, and it stays put until focus tabs into it.
+    let current_idx = if list_len == 0 {
+        0
+    } else {
+        app.rg_file_cursor.min(list_len - 1)
+    };
+    let current_path = match_files.get(current_idx).copied();
     let files_scroll_offset = if list_len <= list_height {
         0
     } else if current_idx >= list_height {

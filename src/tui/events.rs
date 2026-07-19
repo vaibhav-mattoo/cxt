@@ -289,6 +289,8 @@ fn handle_rg_focused(app: &mut AppState, key_event: KeyEvent) -> Option<Vec<Stri
         KeyCode::Enter | KeyCode::Down | KeyCode::Up => {
             if !app.rg_results.is_empty() {
                 app.mode = AppMode::RgNavigating;
+                // Navigation always starts on the Files (left) panel.
+                app.rg_files_focused = true;
             }
         }
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -301,7 +303,6 @@ fn handle_rg_focused(app: &mut AppState, key_event: KeyEvent) -> Option<Vec<Stri
     }
     None
 }
-
 fn handle_rg_navigating(
     app: &mut AppState,
     key_event: KeyEvent,
@@ -323,7 +324,28 @@ fn handle_rg_navigating(
             app.rg_files_focused = !app.rg_files_focused;
         }
         KeyCode::Char('y') => {
-            if let Some(result) = app.rg_results.get(app.rg_cursor) {
+            if app.rg_files_focused {
+                // Left panel: copy every match belonging to the highlighted
+                // file, since a single right-panel line wouldn't correspond
+                // to what's actually highlighted here.
+                let files = app.rg_match_files();
+                if let Some(path) = files.get(app.rg_file_cursor) {
+                    let text: String = app
+                        .rg_results
+                        .iter()
+                        .filter(|r| &r.path == path)
+                        .map(|r| {
+                            format!("{}:{}:{}", r.path.display(), r.line_number, r.line_content)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    match crate::tui::copy_text_to_clipboard(&text) {
+                        Ok(()) => *message = "Copied file matches to clipboard.".to_string(),
+                        Err(e) => *message = format!("Failed to copy: {e}"),
+                    }
+                }
+            } else if let Some(result) = app.rg_results.get(app.rg_cursor) {
+                // Right panel: copy just the single highlighted match line.
                 let text = format!(
                     "{}:{}:{}",
                     result.path.display(),
@@ -347,21 +369,27 @@ fn handle_rg_navigating(
             app.exit_rg();
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
-            if let Some(result) = app.rg_results.get(app.rg_cursor) {
+            if app.rg_files_focused {
+                let files = app.rg_match_files();
+                if let Some(path) = files.get(app.rg_file_cursor) {
+                    let path = path.clone();
+                    app.toggle_selection(path, false);
+                }
+            } else if let Some(result) = app.rg_results.get(app.rg_cursor) {
                 let path = result.path.clone();
                 app.toggle_selection(path, false);
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.rg_files_focused {
-                app.rg_cursor_prev_file();
+                app.rg_file_cursor_up();
             } else if app.rg_cursor > 0 {
                 app.rg_cursor -= 1;
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.rg_files_focused {
-                app.rg_cursor_next_file();
+                app.rg_file_cursor_down();
             } else if app.rg_cursor + 1 < app.rg_results.len() {
                 app.rg_cursor += 1;
             }

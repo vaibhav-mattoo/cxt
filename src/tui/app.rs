@@ -156,6 +156,9 @@ pub struct AppState {
     /// files (left panel) instead of between individual match lines (right
     /// panel). Toggled with Tab.
     pub rg_files_focused: bool,
+    /// Cursor for the Files (left) panel. Independent of `rg_cursor` (the
+    /// right/match panel) — moving one never touches the other.
+    pub rg_file_cursor: usize,
 }
 
 impl AppState {
@@ -221,6 +224,7 @@ impl AppState {
             rg_cursor: 0,
             rg_scroll_offset: 0,
             rg_files_focused: false,
+            rg_file_cursor: 0,
         };
         app.select_first_entry();
         Ok(app)
@@ -254,6 +258,7 @@ impl AppState {
         self.rg_cursor = 0;
         self.rg_scroll_offset = 0;
         self.rg_files_focused = false;
+        self.rg_file_cursor = 0;
     }
     pub fn exit_rg(&mut self) {
         self.mode = AppMode::Normal;
@@ -262,6 +267,7 @@ impl AppState {
         self.rg_cursor = 0;
         self.rg_scroll_offset = 0;
         self.rg_files_focused = false;
+        self.rg_file_cursor = 0;
     }
     pub fn push_rg_char(&mut self, c: char) {
         self.rg_query.push(c);
@@ -339,6 +345,7 @@ impl AppState {
         self.rg_results = parsed;
         self.rg_cursor = 0;
         self.rg_scroll_offset = 0;
+        self.rg_file_cursor = 0;
     }
     /// Clamp the cursor to valid bounds. The scroll offset (in grouped/visual
     /// row space, i.e. including file-header rows) is computed directly by
@@ -350,38 +357,32 @@ impl AppState {
             self.rg_cursor = len.saturating_sub(1);
         }
     }
-    /// Move the cursor to the first match of the previous file group
-    /// (used when the left/Files panel has focus).
-    pub fn rg_cursor_prev_file(&mut self) {
-        let Some(current) = self.rg_results.get(self.rg_cursor).map(|r| r.path.clone()) else {
-            return;
-        };
-        let mut start = self.rg_cursor;
-        while start > 0 && self.rg_results[start - 1].path == current {
-            start -= 1;
+    /// Unique file paths among current rg results, in first-seen order.
+    /// Backs the Files (left) panel, which navigates independently of the
+    /// match cursor (`rg_cursor`) used by the right panel.
+    pub fn rg_match_files(&self) -> Vec<PathBuf> {
+        let mut seen = HashSet::new();
+        let mut files = Vec::new();
+        for result in &self.rg_results {
+            if seen.insert(result.path.clone()) {
+                files.push(result.path.clone());
+            }
         }
-        if start == 0 {
-            return;
-        }
-        let prev_path = self.rg_results[start - 1].path.clone();
-        let mut prev_start = start - 1;
-        while prev_start > 0 && self.rg_results[prev_start - 1].path == prev_path {
-            prev_start -= 1;
-        }
-        self.rg_cursor = prev_start;
+        files
     }
-    /// Move the cursor to the first match of the next file group
-    /// (used when the left/Files panel has focus).
-    pub fn rg_cursor_next_file(&mut self) {
-        let Some(current) = self.rg_results.get(self.rg_cursor).map(|r| r.path.clone()) else {
-            return;
-        };
-        let mut idx = self.rg_cursor;
-        while idx < self.rg_results.len() && self.rg_results[idx].path == current {
-            idx += 1;
+    /// Move the Files panel cursor up by one. Never touches `rg_cursor` —
+    /// the right panel stays exactly where it is until focus tabs over.
+    pub fn rg_file_cursor_up(&mut self) {
+        if self.rg_file_cursor > 0 {
+            self.rg_file_cursor -= 1;
         }
-        if idx < self.rg_results.len() {
-            self.rg_cursor = idx;
+    }
+    /// Move the Files panel cursor down by one, bounded by the number of
+    /// distinct matched files. Never touches `rg_cursor`.
+    pub fn rg_file_cursor_down(&mut self) {
+        let len = self.rg_match_files().len();
+        if self.rg_file_cursor + 1 < len {
+            self.rg_file_cursor += 1;
         }
     }
 }
