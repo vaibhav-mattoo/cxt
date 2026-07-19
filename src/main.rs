@@ -239,36 +239,53 @@ fn main() -> Result<()> {
             git_cmd.args(&args.paths);
         }
 
-        let mut git_child = git_cmd
+        let git_output = git_cmd
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
-            .spawn()
+            .output()
             .map_err(|e| anyhow::anyhow!("Failed to execute git ls-files: {e}"))?;
 
-        let git_stdout = git_child.stdout.take().unwrap();
+        if !git_output.status.success() {
+            let stderr = String::from_utf8_lossy(&git_output.stderr);
+            anyhow::bail!("git ls-files failed: {stderr}");
+        }
 
-        let mut xargs_child = std::process::Command::new("xargs")
-            .args(["-0", "rg", "-c", "--", pattern])
-            .stdin(git_stdout)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to execute xargs/rg: {e}"))?;
+        // Parse NUL-separated paths from `git ls-files -z` into a Vec<String>.
+        let files: Vec<String> = String::from_utf8_lossy(&git_output.stdout)
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
 
-        let output = xargs_child
-            .wait_with_output()
-            .map_err(|e| anyhow::anyhow!("Failed to wait for rg: {e}"))?;
+        if files.is_empty() {
+            println!("No matches found.");
+            return Ok(());
+        }
 
-        let _ = git_child.wait();
-        let text = String::from_utf8_lossy(&output.stdout);
         use std::collections::BTreeMap;
         let mut matches = BTreeMap::new();
-        for line in text.lines() {
-            if let Some((path, count_str)) = line.rsplit_once(':') {
-                let count: usize = count_str.parse().unwrap_or(0);
-                matches.insert(path.to_string(), count);
+
+        // Chunk the files to avoid ARG_MAX limits on command line length,
+        // replicating the behavior of `xargs` without the external dependency.
+        for chunk in files.chunks(500) {
+            let mut rg_cmd = std::process::Command::new("rg");
+            rg_cmd.args(["-c", "--", pattern]);
+            rg_cmd.args(chunk);
+
+            let output = rg_cmd
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()?;
+
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                if let Some((path, count_str)) = line.rsplit_once(':') {
+                    let count: usize = count_str.parse().unwrap_or(0);
+                    matches.insert(path.to_string(), count);
+                }
             }
         }
+
         if matches.is_empty() {
             println!("No matches found.");
             return Ok(());

@@ -284,36 +284,48 @@ impl AppState {
             self.rg_scroll_offset = 0;
             return;
         }
-        let git_child = std::process::Command::new("git")
+        let git_result = std::process::Command::new("git")
             .args(["ls-files", "-z", "--"])
             .arg(&self.root_dir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
-            .spawn();
-        let output = match git_child {
-            Ok(mut git_child) => {
-                let git_stdout = git_child.stdout.take().unwrap();
-                let result = std::process::Command::new("xargs")
-                    .args([
-                        "-0",
-                        "rg",
-                        "--line-number",
-                        "--no-heading",
-                        "--color=never",
-                        "--",
-                        &self.rg_query,
-                    ])
-                    .stdin(git_stdout)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::null())
-                    .output();
-                let _ = git_child.wait();
-                match result {
-                    Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
-                    Err(_) => String::new(),
+            .output();
+        let output = match git_result {
+            Ok(git_output) if git_output.status.success() => {
+                let files: Vec<String> = String::from_utf8_lossy(&git_output.stdout)
+                    .split('\0')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+
+                if files.is_empty() {
+                    String::new()
+                } else {
+                    let mut combined = String::new();
+                    // Chunk files to avoid ARG_MAX limits (replicates `xargs`).
+                    for chunk in files.chunks(500) {
+                        let mut rg_cmd = std::process::Command::new("rg");
+                        rg_cmd.args([
+                            "--line-number",
+                            "--no-heading",
+                            "--color=never",
+                            "--",
+                            &self.rg_query,
+                        ]);
+                        rg_cmd.args(chunk);
+
+                        let rg_result = rg_cmd
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::null())
+                            .output();
+                        if let Ok(o) = rg_result {
+                            combined.push_str(&String::from_utf8_lossy(&o.stdout));
+                        }
+                    }
+                    combined
                 }
             }
-            Err(_) => String::new(),
+            _ => String::new(),
         };
         let query_lower = self.rg_query.to_lowercase();
         let query_char_count = self.rg_query.chars().count();
