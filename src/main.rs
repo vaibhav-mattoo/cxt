@@ -193,7 +193,7 @@ fn main() -> Result<()> {
         for p in &paths {
             println!("  {p}");
         }
-        let fmt = formatter::build_formatter(args.format, args.no_path, args.relative);
+        let fmt = formatter::build_formatter(args.format, args.no_path, args.relative, args.aider);
         let mut aggregator = ContentAggregator::new(
             fmt,
             args.hidden,
@@ -228,11 +228,84 @@ fn main() -> Result<()> {
     }
     let stdin_is_piped = !atty::is(atty::Stream::Stdin);
     let mut args = args;
-    let paths: Vec<String> = if args.tui {
+    let paths: Vec<String> = if let Some(pattern) = &args.rg {
+        // Pipe `git ls-files -z -- <paths>` into `xargs -0 rg -c` so ripgrep
+        // only searches git-tracked files in the specified paths.
+        // This safely handles spaces in filenames and avoids ARG_MAX limits.
+        let mut git_cmd = std::process::Command::new("git");
+        git_cmd.args(["ls-files", "-z"]);
+        if !args.paths.is_empty() {
+            git_cmd.arg("--");
+            git_cmd.args(&args.paths);
+        }
+
+        let git_output = git_cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to execute git ls-files: {e}"))?;
+
+        if !git_output.status.success() {
+            let stderr = String::from_utf8_lossy(&git_output.stderr);
+            anyhow::bail!("git ls-files failed: {stderr}");
+        }
+
+        // Parse NUL-separated paths from `git ls-files -z` into a Vec<String>.
+        let files: Vec<String> = String::from_utf8_lossy(&git_output.stdout)
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+
+        if files.is_empty() {
+            println!("No matches found.");
+            return Ok(());
+        }
+
+        use std::collections::BTreeMap;
+        let mut matches = BTreeMap::new();
+
+        // Chunk the files to avoid ARG_MAX limits on command line length,
+        // replicating the behavior of `xargs` without the external dependency.
+        for chunk in files.chunks(500) {
+            let mut rg_cmd = std::process::Command::new("rg");
+            rg_cmd.args(["-c", "--", pattern]);
+            rg_cmd.args(chunk);
+
+            let output = rg_cmd
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()?;
+
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                if let Some((path, count_str)) = line.rsplit_once(':') {
+                    let count: usize = count_str.parse().unwrap_or(0);
+                    matches.insert(path.to_string(), count);
+                }
+            }
+        }
+
+        if matches.is_empty() {
+            println!("No matches found.");
+            return Ok(());
+        }
+        for (path, count) in &matches {
+            let noun = if *count == 1 { "match" } else { "matches" };
+            if atty::is(atty::Stream::Stdout) {
+                // ANSI colors: path = cyan, count = green
+                println!("\x1b[36m{path}\x1b[0m (\x1b[32m{count}\x1b[0m {noun})");
+            } else {
+                println!("{path} ({count} {noun})");
+            }
+        }
+        matches.into_keys().collect()
+    } else if args.tui {
         // --tui explicitly requested: always launch interactive picker, ignore stdin.
-        let outcome = tui::run_tui(args.relative, args.no_path)?;
+        let outcome = tui::run_tui(args.relative, args.no_path, args.aider)?;
         args.relative = outcome.relative;
         args.no_path = outcome.no_path;
+        args.aider = outcome.aider;
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
@@ -254,9 +327,10 @@ fn main() -> Result<()> {
         combined
     } else if args.paths.is_empty() {
         // No stdin pipe, no CLI args: fall back to interactive TUI.
-        let outcome = tui::run_tui(args.relative, args.no_path)?;
+        let outcome = tui::run_tui(args.relative, args.no_path, args.aider)?;
         args.relative = outcome.relative;
         args.no_path = outcome.no_path;
+        args.aider = outcome.aider;
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
@@ -294,7 +368,7 @@ fn main() -> Result<()> {
             std::process::exit(1);
         });
 
-    let fmt = formatter::build_formatter(args.format, args.no_path, args.relative);
+    let fmt = formatter::build_formatter(args.format, args.no_path, args.relative, args.aider);
     let mut aggregator = ContentAggregator::new(
         fmt,
         args.hidden,
@@ -367,14 +441,16 @@ fn main() -> Result<()> {
         }
 
         cw.finish()?;
-        let cwd = std::env::current_dir().ok();
-        for p in &paths {
-            let display = cwd
-                .as_ref()
-                .and_then(|c| std::path::Path::new(p).strip_prefix(c).ok())
-                .map(|rel| rel.display().to_string())
-                .unwrap_or_else(|| p.clone());
-            println!("  {display}");
+        if args.rg.is_none() {
+            let cwd = std::env::current_dir().ok();
+            for p in &paths {
+                let display = cwd
+                    .as_ref()
+                    .and_then(|c| std::path::Path::new(p).strip_prefix(c).ok())
+                    .map(|rel| rel.display().to_string())
+                    .unwrap_or_else(|| p.clone());
+                println!("  {display}");
+            }
         }
         println!(
             "Copied {} tokens from {} files to clipboard.",

@@ -5,6 +5,7 @@ mod theme;
 
 use anyhow::{Context, Result};
 use crossterm::{
+    cursor::{Hide, Show},
     event::{self, Event},
     execute as crossterm_execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -51,24 +52,38 @@ pub(super) fn load_last_selection() -> Option<HashSet<PathBuf>> {
     if paths.is_empty() { None } else { Some(paths) }
 }
 
+pub fn copy_text_to_clipboard(text: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut handler = crate::output_handler::OutputHandler::new();
+    let mut cw = handler.get_clipboard_writer()?;
+    cw.write_all(text.as_bytes())?;
+    cw.finish()?;
+    Ok(())
+}
+
 pub struct TuiOutcome {
     pub paths: Vec<String>,
     pub relative: bool,
     pub no_path: bool,
+    pub aider: bool,
 }
 
-pub fn run_tui(relative: bool, no_path: bool) -> Result<TuiOutcome> {
+pub fn run_tui(relative: bool, no_path: bool, aider: bool) -> Result<TuiOutcome> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    crossterm_execute!(stdout, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    crossterm_execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture,
+        Hide
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    let res = tui_main(&mut terminal, relative, no_path);
-
+    let res = tui_main(&mut terminal, relative, no_path, aider);
     disable_raw_mode()?;
     crossterm_execute!(
         io::stdout(),
+        Show,
         LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture
     )?;
@@ -79,8 +94,9 @@ fn tui_main(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     relative: bool,
     no_path: bool,
+    aider: bool,
 ) -> Result<TuiOutcome> {
-    let mut app = AppState::new(relative, no_path).context("Failed to read current directory")?;
+    let mut app = AppState::new(relative, no_path, aider).context("Failed to read current directory")?;
     let mut message = String::new();
     let mut needs_redraw = true;
     let mut rendered_height: u16 = 0;
@@ -89,10 +105,19 @@ fn tui_main(
         if needs_redraw {
             // Search mode manages its own cursor scrolling; tree widget self-manages.
             if app.mode != AppMode::Normal {
-                if app.mode == AppMode::GitTree {
-                    app.sync_git_scroll(app.visible_height);
-                } else {
-                    app.sync_search_scroll(app.visible_height);
+                match app.mode {
+                    AppMode::GitTree => {
+                        app.sync_git_scroll(app.visible_height);
+                    }
+                    AppMode::GitStatus => {
+                        app.sync_git_status_diff_scroll(app.visible_height);
+                    }
+                    AppMode::RgFocused | AppMode::RgNavigating => {
+                        app.sync_rg_scroll(app.visible_height);
+                    }
+                    _ => {
+                        app.sync_search_scroll(app.visible_height);
+                    }
                 }
             }
             let file_count = app.selected_file_count();
@@ -119,6 +144,7 @@ fn tui_main(
                         paths,
                         relative: app.relative,
                         no_path: app.no_path,
+                        aider: app.aider,
                     });
                 }
                 needs_redraw = true;

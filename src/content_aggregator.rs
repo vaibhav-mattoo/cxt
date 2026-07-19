@@ -494,7 +494,7 @@ mod tests {
 
     fn xml_aggregator(no_path: bool) -> ContentAggregator {
         ContentAggregator::new(
-            build_formatter(FormatChoice::Xml, no_path, false),
+            build_formatter(FormatChoice::Xml, no_path, false, false),
             false,
             vec![],
             true,
@@ -608,7 +608,7 @@ mod tests {
         fs::write(&hidden_file, "Hidden content").unwrap();
 
         let mut aggregator = ContentAggregator::new(
-            build_formatter(FormatChoice::Xml, false, false),
+            build_formatter(FormatChoice::Xml, false, false, false),
             true,
             vec![],
             true,

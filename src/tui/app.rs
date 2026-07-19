@@ -6,12 +6,40 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Normal,
     SearchFocused,
     SearchNavigating,
     GitTree,
+    GitStatus,
+    RgFocused,
+    RgNavigating,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum GitStatusSection {
+    Staged,
+    Unstaged,
+    Untracked,
+}
+
+#[derive(Clone)]
+pub struct GitStatusItem {
+    pub path: String,
+    pub section: GitStatusSection,
+}
+
+#[derive(Clone)]
+pub struct GitStashItem {
+    pub stash_ref: String,
+    pub message: String,
+}
+
+#[derive(Clone)]
+pub struct GitBranchItem {
+    pub name: String,
+    pub is_current: bool,
 }
 
 #[derive(Clone)]
@@ -24,9 +52,18 @@ pub struct SearchResult {
 }
 
 #[derive(Clone)]
+pub struct RgResult {
+    pub path: PathBuf,
+    pub line_number: usize,
+    pub line_content: String,
+    pub match_indices: Vec<usize>,
+}
+
+#[derive(Clone)]
 pub struct GitCommit {
     pub display: String,
     pub hash: String,
+    pub refs: String,
 }
 
 /// Detect whether `dir` is inside a git work-tree by walking up for a `.git` entry.
@@ -62,6 +99,7 @@ impl DirItem {
 }
 
 pub struct AppState {
+    pub aider: bool,
     pub root_dir: PathBuf,
     pub tree_state: tui_tree_widget::TreeState<PathBuf>,
     pub dir_cache: HashMap<PathBuf, Vec<DirItem>>,
@@ -91,18 +129,40 @@ pub struct AppState {
     pub git_files_scroll_offset: usize,
     pub git_panel_focused: bool,
     pub git_marked_commits: HashSet<String>,
-    git_base_selected: HashSet<PathBuf>,
+    pub(crate) git_base_selected: HashSet<PathBuf>,
     git_diff_cache: HashMap<String, Vec<String>>,
     pub show_git_diff: bool,
     pub git_diff_content: String,
     pub git_diff_scroll_offset: usize,
     pub git_diff_cursor: usize,
     dir_select_cache: RefCell<HashMap<PathBuf, bool>>,
+    pub git_status_items: Vec<GitStatusItem>,
+    pub git_status_cursor: usize,
+    pub git_status_scroll_offset: usize,
+    pub git_status_diff_content: String,
+    pub git_status_diff_scroll_offset: usize,
+    pub git_status_diff_cursor: usize,
+    pub git_status_diff_focused: bool,
+    pub git_stash_items: Vec<GitStashItem>,
+    pub pending_stash_pop: Option<String>,
+    pub git_branch_items: Vec<GitBranchItem>,
+    pub pending_branch_switch: Option<String>,
     matcher: fuzzy_matcher::skim::SkimMatcherV2,
+    pub rg_query: String,
+    pub rg_results: Vec<RgResult>,
+    pub rg_cursor: usize,
+    pub rg_scroll_offset: usize,
+    /// When true, keyboard navigation in rg mode moves the cursor between
+    /// files (left panel) instead of between individual match lines (right
+    /// panel). Toggled with Tab.
+    pub rg_files_focused: bool,
+    /// Cursor for the Files (left) panel. Independent of `rg_cursor` (the
+    /// right/match panel) — moving one never touches the other.
+    pub rg_file_cursor: usize,
 }
 
 impl AppState {
-    pub fn new(relative: bool, no_path: bool) -> io::Result<Self> {
+    pub fn new(relative: bool, no_path: bool, aider: bool) -> io::Result<Self> {
         let root_dir = env::current_dir()?;
         let respect_gitignore = is_git_repo(&root_dir);
         let mut dir_cache = HashMap::new();
@@ -110,6 +170,7 @@ impl AppState {
         dir_cache.insert(root_dir.clone(), root_entries);
 
         let mut app = Self {
+            aider,
             root_dir,
             tree_state: tui_tree_widget::TreeState::default(),
             dir_cache,
@@ -146,7 +207,24 @@ impl AppState {
             git_diff_scroll_offset: 0,
             git_diff_cursor: 0,
             dir_select_cache: RefCell::new(HashMap::new()),
+            git_status_items: Vec::new(),
+            git_status_cursor: 0,
+            git_status_scroll_offset: 0,
+            git_status_diff_content: String::new(),
+            git_status_diff_scroll_offset: 0,
+            git_status_diff_cursor: 0,
+            git_status_diff_focused: false,
+            git_stash_items: Vec::new(),
+            pending_stash_pop: None,
+            git_branch_items: Vec::new(),
+            pending_branch_switch: None,
             matcher: fuzzy_matcher::skim::SkimMatcherV2::default(),
+            rg_query: String::new(),
+            rg_results: Vec::new(),
+            rg_cursor: 0,
+            rg_scroll_offset: 0,
+            rg_files_focused: false,
+            rg_file_cursor: 0,
         };
         app.select_first_entry();
         Ok(app)
@@ -171,9 +249,159 @@ impl AppState {
     }
 }
 
-// SelectionExt
+// RgExt (ripgrep content search mode)
 impl AppState {
-    fn invalidate_caches(&mut self) {
+    pub fn enter_rg(&mut self) {
+        self.mode = AppMode::RgFocused;
+        self.rg_query.clear();
+        self.rg_results.clear();
+        self.rg_cursor = 0;
+        self.rg_scroll_offset = 0;
+        self.rg_files_focused = false;
+        self.rg_file_cursor = 0;
+    }
+    pub fn exit_rg(&mut self) {
+        self.mode = AppMode::Normal;
+        self.rg_query.clear();
+        self.rg_results.clear();
+        self.rg_cursor = 0;
+        self.rg_scroll_offset = 0;
+        self.rg_files_focused = false;
+        self.rg_file_cursor = 0;
+    }
+    pub fn push_rg_char(&mut self, c: char) {
+        self.rg_query.push(c);
+        self.update_rg();
+    }
+    pub fn pop_rg_char(&mut self) {
+        self.rg_query.pop();
+        self.update_rg();
+    }
+    pub fn update_rg(&mut self) {
+        if self.rg_query.is_empty() {
+            self.rg_results.clear();
+            self.rg_cursor = 0;
+            self.rg_scroll_offset = 0;
+            return;
+        }
+        let git_result = std::process::Command::new("git")
+            .args(["ls-files", "-z", "--"])
+            .arg(&self.root_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output();
+        let output = match git_result {
+            Ok(git_output) if git_output.status.success() => {
+                let files: Vec<String> = String::from_utf8_lossy(&git_output.stdout)
+                    .split('\0')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+
+                if files.is_empty() {
+                    String::new()
+                } else {
+                    let mut combined = String::new();
+                    // Chunk files to avoid ARG_MAX limits (replicates `xargs`).
+                    for chunk in files.chunks(500) {
+                        let mut rg_cmd = std::process::Command::new("rg");
+                        rg_cmd.args([
+                            "--line-number",
+                            "--no-heading",
+                            "--color=never",
+                            "--",
+                            &self.rg_query,
+                        ]);
+                        rg_cmd.args(chunk);
+
+                        let rg_result = rg_cmd
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::null())
+                            .output();
+                        if let Ok(o) = rg_result {
+                            combined.push_str(&String::from_utf8_lossy(&o.stdout));
+                        }
+                    }
+                    combined
+                }
+            }
+            _ => String::new(),
+        };
+        let query_lower = self.rg_query.to_lowercase();
+        let query_char_count = self.rg_query.chars().count();
+        let mut parsed = Vec::new();
+        for line in output.lines() {
+            let parts: Vec<&str> = line.splitn(3, ':').collect();
+            if parts.len() == 3 {
+                let path = PathBuf::from(parts[0]);
+                let line_num: usize = parts[1].parse().unwrap_or(0);
+                let content = parts[2];
+                let mut indices = Vec::new();
+                let content_lower = content.to_lowercase();
+                let mut start = 0;
+                while let Some(pos) = content_lower[start..].find(&query_lower) {
+                    let abs = start + pos;
+                    for i in 0..query_char_count {
+                        indices.push(abs + i);
+                    }
+                    start = abs + query_char_count;
+                }
+                parsed.push(RgResult {
+                    path,
+                    line_number: line_num,
+                    line_content: content.to_string(),
+                    match_indices: indices,
+                });
+            }
+        }
+        self.rg_results = parsed;
+        self.rg_cursor = 0;
+        self.rg_scroll_offset = 0;
+        self.rg_file_cursor = 0;
+    }
+    /// Clamp the cursor to valid bounds. The scroll offset (in grouped/visual
+    /// row space, i.e. including file-header rows) is computed directly by
+    /// the render layer, which is the only place that knows the current
+    /// grouping layout.
+    pub fn sync_rg_scroll(&mut self, _visible_height: usize) {
+        let len = self.rg_results.len();
+        if self.rg_cursor >= len {
+            self.rg_cursor = len.saturating_sub(1);
+        }
+    }
+    /// Unique file paths among current rg results, in first-seen order.
+    /// Backs the Files (left) panel, which navigates independently of the
+    /// match cursor (`rg_cursor`) used by the right panel.
+    pub fn rg_match_files(&self) -> Vec<PathBuf> {
+        let mut seen = HashSet::new();
+        let mut files = Vec::new();
+        for result in &self.rg_results {
+            if seen.insert(result.path.clone()) {
+                files.push(result.path.clone());
+            }
+        }
+        files
+    }
+    /// Move the Files panel cursor up by one. Never touches `rg_cursor` —
+    /// the right panel stays exactly where it is until focus tabs over.
+    pub fn rg_file_cursor_up(&mut self) {
+        if self.rg_file_cursor > 0 {
+            self.rg_file_cursor -= 1;
+        }
+    }
+    /// Move the Files panel cursor down by one, bounded by the number of
+    /// distinct matched files. Never touches `rg_cursor`.
+    pub fn rg_file_cursor_down(&mut self) {
+        let len = self.rg_match_files().len();
+        if self.rg_file_cursor + 1 < len {
+            self.rg_file_cursor += 1;
+        }
+    }
+}
+
+// ScrollExt (search mode only — tree widget self-manages scrolling)
+impl AppState {
+    pub(crate) fn invalidate_caches(&mut self) {
         self.selected_file_count_cache = None;
         self.selected_loc_cache = None;
         self.dir_select_cache.get_mut().clear();
@@ -300,7 +528,7 @@ impl AppState {
 
     pub fn enter_git_tree_mode(&mut self) {
         if let Ok(output) = std::process::Command::new("git")
-            .args(["log", "--graph", "--pretty=format:%H%x00%s"])
+            .args(["log", "--graph", "--pretty=format:%H%x00%d%x00%s"])
             .output()
         {
             if output.status.success() {
@@ -308,8 +536,9 @@ impl AppState {
                 self.git_commits = stdout
                     .lines()
                     .map(|line| {
-                        let mut parts = line.splitn(2, '\0');
+                        let mut parts = line.splitn(3, '\0');
                         let graph_hash = parts.next().unwrap_or("");
+                        let refs_raw = parts.next().unwrap_or("");
                         let message = parts.next().unwrap_or("");
 
                         let long_hash = graph_hash
@@ -335,19 +564,32 @@ impl AppState {
                             format!("{} {}", display_graph, message)
                         };
 
-                        GitCommit { display, hash }
+                        let refs = refs_raw
+                            .trim()
+                            .trim_start_matches('(')
+                            .trim_end_matches(')')
+                            .trim()
+                            .to_string();
+
+                        GitCommit {
+                            display,
+                            hash,
+                            refs,
+                        }
                     })
                     .collect();
             } else {
                 self.git_commits = vec![GitCommit {
                     display: "Failed to load git log. Not a git repository?".to_string(),
                     hash: String::new(),
+                    refs: String::new(),
                 }];
             }
         } else {
             self.git_commits = vec![GitCommit {
                 display: "Failed to execute git command.".to_string(),
                 hash: String::new(),
+                refs: String::new(),
             }];
         }
 
@@ -364,6 +606,118 @@ impl AppState {
         self.git_diff_cursor = 0;
         self.fetch_git_files();
         self.mode = AppMode::GitTree;
+    }
+
+    pub fn enter_git_status_mode(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain=v1"])
+            .output();
+
+        let mut items = Vec::new();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    if line.len() < 3 {
+                        continue;
+                    }
+                    let x = line.chars().next().unwrap();
+                    let y = line.chars().nth(1).unwrap();
+                    let path = line[3..].to_string();
+                    let path = path.split(" -> ").last().unwrap_or(&path).to_string();
+
+                    if x == '?' && y == '?' {
+                        items.push(GitStatusItem {
+                            path,
+                            section: GitStatusSection::Untracked,
+                        });
+                    } else {
+                        if x != ' ' && x != '?' {
+                            items.push(GitStatusItem {
+                                path: path.clone(),
+                                section: GitStatusSection::Staged,
+                            });
+                        }
+                        if y != ' ' && y != '?' {
+                            items.push(GitStatusItem {
+                                path,
+                                section: GitStatusSection::Unstaged,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        self.fetch_git_stash_list();
+        self.fetch_git_branch_list();
+        let total = items.len() + self.git_stash_items.len() + self.git_branch_items.len();
+        if self.git_status_cursor >= total {
+            self.git_status_cursor = total.saturating_sub(1);
+        }
+        self.git_status_items = items;
+        self.git_status_diff_content = String::new();
+        self.git_status_diff_scroll_offset = 0;
+        self.git_status_diff_cursor = 0;
+        self.git_status_diff_focused = false;
+        self.git_base_selected = self.selected.clone();
+        self.pending_stash_pop = None;
+        self.pending_branch_switch = None;
+        self.mode = AppMode::GitStatus;
+        self.fetch_git_status_diff();
+    }
+
+    /// Refresh the stash list (used on entering Git Status mode and after
+    /// pushing/popping a stash).
+    pub fn fetch_git_stash_list(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["stash", "list", "--pretty=format:%gd%x00%s"])
+            .output();
+        let mut items = Vec::new();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    let mut parts = line.splitn(2, '\0');
+                    let stash_ref = parts.next().unwrap_or("").to_string();
+                    let message = parts.next().unwrap_or("").to_string();
+                    if !stash_ref.is_empty() {
+                        items.push(GitStashItem { stash_ref, message });
+                    }
+                }
+            }
+        }
+        self.git_stash_items = items;
+    }
+
+    /// Refresh the branch list (used on entering Git Status mode).
+    pub fn fetch_git_branch_list(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["branch", "--format=%(HEAD)%00%(refname:short)"])
+            .output();
+        let mut items = Vec::new();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    let mut parts = line.splitn(2, '\0');
+                    let head = parts.next().unwrap_or("").trim();
+                    let name = parts.next().unwrap_or("").to_string();
+                    if !name.is_empty() {
+                        items.push(GitBranchItem {
+                            name,
+                            is_current: head == "*",
+                        });
+                    }
+                }
+            }
+        }
+        self.git_branch_items = items;
+    }
+
+    /// Total number of navigable rows in Git Status mode (file items + stashes).
+    pub fn git_status_total_len(&self) -> usize {
+        self.git_status_items.len() + self.git_stash_items.len() + self.git_branch_items.len()
     }
 
     pub fn fetch_git_files(&mut self) {
@@ -406,10 +760,149 @@ impl AppState {
         files
     }
 
-    fn git_file_abs_path(&self, file: &str) -> PathBuf {
+    pub(crate) fn git_file_abs_path(&self, file: &str) -> PathBuf {
         env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(file)
+    }
+
+    /// Fetch the diff for the currently selected git status item.
+    /// Staged → `git diff --cached`, Unstaged → `git diff`, Untracked → file content.
+    pub fn fetch_git_status_diff(&mut self) {
+        let items_len = self.git_status_items.len();
+        if self.git_status_cursor >= items_len {
+            let after_items_idx = self.git_status_cursor - items_len;
+            let stash_len = self.git_stash_items.len();
+
+            if after_items_idx < stash_len {
+                let stash = &self.git_stash_items[after_items_idx];
+                let output = std::process::Command::new("git")
+                    .args(["stash", "show", "-p", &stash.stash_ref])
+                    .output();
+                self.git_status_diff_content = match output {
+                    Ok(o) if o.status.success() => {
+                        let text = String::from_utf8_lossy(&o.stdout).to_string();
+                        if text.is_empty() {
+                            "(no textual diff)".to_string()
+                        } else {
+                            text
+                        }
+                    }
+                    Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+                    Err(e) => format!("Failed to run git stash show: {e}"),
+                };
+                self.git_status_diff_scroll_offset = 0;
+                self.git_status_diff_cursor = 0;
+                return;
+            }
+
+            let branch_idx = after_items_idx - stash_len;
+            if branch_idx < self.git_branch_items.len() {
+                let branch = &self.git_branch_items[branch_idx];
+                if branch.is_current {
+                    self.git_status_diff_content = format!(
+                        "Already on branch '{}'.\n\nSelect another branch and press Enter to switch.",
+                        branch.name
+                    );
+                } else {
+                    let output = std::process::Command::new("git")
+                        .args(["log", "--oneline", "-20", &branch.name])
+                        .output();
+                    self.git_status_diff_content = match output {
+                        Ok(o) if o.status.success() => {
+                            let text = String::from_utf8_lossy(&o.stdout).to_string();
+                            if text.is_empty() {
+                                format!("(no commits on branch '{}')", branch.name)
+                            } else {
+                                format!("Recent commits on '{}':\n\n{}", branch.name, text)
+                            }
+                        }
+                        Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+                        Err(e) => format!("Failed to run git log: {e}"),
+                    };
+                }
+                self.git_status_diff_scroll_offset = 0;
+                self.git_status_diff_cursor = 0;
+                return;
+            }
+
+            self.git_status_diff_content = "No changes in working tree.".to_string();
+            self.git_status_diff_scroll_offset = 0;
+            self.git_status_diff_cursor = 0;
+            return;
+        }
+        let Some(item) = self.git_status_items.get(self.git_status_cursor).cloned() else {
+            self.git_status_diff_content = "No changes in working tree.".to_string();
+            self.git_status_diff_scroll_offset = 0;
+            self.git_status_diff_cursor = 0;
+            return;
+        };
+
+        let output = match item.section {
+            GitStatusSection::Staged => std::process::Command::new("git")
+                .args(["diff", "--cached", "--", &item.path])
+                .output(),
+            GitStatusSection::Unstaged => std::process::Command::new("git")
+                .args(["diff", "--", &item.path])
+                .output(),
+            GitStatusSection::Untracked => {
+                let abs_path = self.git_file_abs_path(&item.path);
+                match std::fs::read_to_string(&abs_path) {
+                    Ok(content) => {
+                        self.git_status_diff_content = content;
+                    }
+                    Err(_) => {
+                        self.git_status_diff_content =
+                            "Untracked file (binary or unreadable).".to_string();
+                    }
+                }
+                self.git_status_diff_scroll_offset = 0;
+                self.git_status_diff_cursor = 0;
+                return;
+            }
+        };
+
+        self.git_status_diff_content = match output {
+            Ok(o) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout).to_string();
+                if text.is_empty() {
+                    "(no textual diff)".to_string()
+                } else {
+                    text
+                }
+            }
+            Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => format!("Failed to run git diff: {e}"),
+        };
+        self.git_status_diff_scroll_offset = 0;
+        self.git_status_diff_cursor = 0;
+    }
+
+    /// Keep the diff cursor within the viewport, scrolling when it leaves.
+    pub fn sync_git_status_diff_scroll(&mut self, visible_height: usize) {
+        self.visible_height = visible_height;
+        let len = self.git_status_diff_content.lines().count();
+        if len == 0 {
+            self.git_status_diff_cursor = 0;
+            self.git_status_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_status_diff_cursor >= len {
+            self.git_status_diff_cursor = len - 1;
+        }
+        if len <= visible_height {
+            self.git_status_diff_scroll_offset = 0;
+            return;
+        }
+        if self.git_status_diff_cursor < self.git_status_diff_scroll_offset {
+            self.git_status_diff_scroll_offset = self.git_status_diff_cursor;
+        } else if self.git_status_diff_cursor >= self.git_status_diff_scroll_offset + visible_height
+        {
+            self.git_status_diff_scroll_offset = self.git_status_diff_cursor + 1 - visible_height;
+        }
+        self.git_status_diff_scroll_offset = self
+            .git_status_diff_scroll_offset
+            .min(len.saturating_sub(visible_height));
     }
     pub fn fetch_git_diff(&mut self) {
         let hash = self
@@ -429,7 +922,15 @@ impl AppState {
         }
 
         let output = std::process::Command::new("git")
-            .args(["diff-tree", "--no-commit-id", "-p", "--root", &hash, "--", &file])
+            .args([
+                "diff-tree",
+                "--no-commit-id",
+                "-p",
+                "--root",
+                &hash,
+                "--",
+                &file,
+            ])
             .output();
 
         self.git_diff_content = match output {
@@ -768,7 +1269,9 @@ pub fn read_dir_sorted(dir: &PathBuf, respect_gitignore: bool) -> io::Result<Vec
         })
         .collect();
     entries.sort_unstable_by(|a, b| {
-        (!a.is_dir()).cmp(&(!b.is_dir())).then_with(|| a.file_name().cmp(b.file_name()))
+        (!a.is_dir())
+            .cmp(&(!b.is_dir()))
+            .then_with(|| a.file_name().cmp(b.file_name()))
     });
     Ok(entries)
 }

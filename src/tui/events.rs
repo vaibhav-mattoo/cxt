@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButto
 use ratatui::layout::Position;
 use std::path::PathBuf;
 
-use crate::tui::app::{AppMode, AppState};
+use crate::tui::app::{AppMode, AppState, GitStatusSection};
 
 pub fn handle_key_event(
     app: &mut AppState,
@@ -17,20 +17,67 @@ pub fn handle_key_event(
         AppMode::SearchNavigating => handle_search_navigating(app, key_event, message),
         AppMode::Normal => handle_normal(app, key_event, message),
         AppMode::GitTree => handle_git_tree(app, key_event, message),
+        AppMode::GitStatus => handle_git_status(app, key_event, message),
+        AppMode::RgFocused => handle_rg_focused(app, key_event),
+        AppMode::RgNavigating => handle_rg_navigating(app, key_event, message),
     }
 }
 
-fn handle_git_tree(
+fn handle_git_status(
     app: &mut AppState,
     key_event: KeyEvent,
     message: &mut String,
 ) -> Option<Vec<String>> {
+    if let Some(stash_ref) = app.pending_stash_pop.clone() {
+        match key_event.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let _ = std::process::Command::new("git")
+                    .args(["stash", "pop", &stash_ref])
+                    .output();
+                app.pending_stash_pop = None;
+                let old_cursor = app.git_status_cursor;
+                app.enter_git_status_mode();
+                app.git_status_cursor = old_cursor.min(app.git_status_total_len().saturating_sub(1));
+                app.fetch_git_status_diff();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_stash_pop = None;
+            }
+            _ => {}
+        }
+        return None;
+    }
+    if let Some(branch) = app.pending_branch_switch.clone() {
+        match key_event.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let _ = std::process::Command::new("git")
+                    .args(["switch", &branch])
+                    .output();
+                app.pending_branch_switch = None;
+                app.enter_git_status_mode();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_branch_switch = None;
+            }
+            _ => {}
+        }
+        return None;
+    }
     match key_event.code {
         KeyCode::Tab => {
-            app.git_panel_focused = !app.git_panel_focused;
+            app.git_status_diff_focused = !app.git_status_diff_focused;
         }
-        KeyCode::Esc => {
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.git_status_diff_focused = false;
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.git_status_diff_focused = true;
+        }
+        KeyCode::Char('1') | KeyCode::Esc => {
             app.mode = AppMode::Normal;
+        }
+        KeyCode::Char('2') => {
+            app.enter_git_tree_mode();
         }
         KeyCode::Char('q') => return Some(vec![]),
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -42,6 +89,127 @@ fn handle_git_tree(
             } else {
                 return Some(app.collect_selected_paths());
             }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
+        }
+        KeyCode::Char('s') => {
+            if let Some(item) = app.git_status_items.get(app.git_status_cursor).cloned() {
+                let path = &item.path;
+                match item.section {
+                    GitStatusSection::Staged => {
+                        let _ = std::process::Command::new("git")
+                            .args(["restore", "--staged", path])
+                            .output();
+                    }
+                    GitStatusSection::Unstaged | GitStatusSection::Untracked => {
+                        let _ = std::process::Command::new("git")
+                            .args(["add", path])
+                            .output();
+                    }
+                }
+                let old_cursor = app.git_status_cursor;
+                app.enter_git_status_mode();
+                app.git_status_cursor = old_cursor.min(app.git_status_items.len().saturating_sub(1));
+                app.fetch_git_status_diff();
+            }
+        }
+        KeyCode::Char('z') => {
+            let _ = std::process::Command::new("git")
+                .args(["stash", "push"])
+                .output();
+            let old_cursor = app.git_status_cursor;
+            app.enter_git_status_mode();
+            app.git_status_cursor = old_cursor.min(app.git_status_total_len().saturating_sub(1));
+            app.fetch_git_status_diff();
+        }
+        KeyCode::Enter => {
+            let items_len = app.git_status_items.len();
+            if app.git_status_cursor >= items_len {
+                let after_items_idx = app.git_status_cursor - items_len;
+                let stash_len = app.git_stash_items.len();
+                if after_items_idx < stash_len {
+                    if let Some(stash) = app.git_stash_items.get(after_items_idx).cloned() {
+                        app.pending_stash_pop = Some(stash.stash_ref.clone());
+                    }
+                } else {
+                    let branch_idx = after_items_idx - stash_len;
+                    if let Some(branch) = app.git_branch_items.get(branch_idx).cloned() {
+                        if !branch.is_current {
+                            app.pending_branch_switch = Some(branch.name.clone());
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(item) = app.git_status_items.get(app.git_status_cursor).cloned() {
+                let path = app.git_file_abs_path(&item.path);
+                app.invalidate_caches();
+                if app.selected.remove(&path) {
+                    app.git_base_selected.remove(&path);
+                } else {
+                    app.selected.insert(path.clone());
+                    app.git_base_selected.insert(path);
+                }
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.git_status_diff_focused {
+                if app.git_status_diff_cursor > 0 {
+                    app.git_status_diff_cursor -= 1;
+                }
+            } else if app.git_status_cursor > 0 {
+                app.git_status_cursor -= 1;
+                app.fetch_git_status_diff();
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.git_status_diff_focused {
+                let len = app.git_status_diff_content.lines().count();
+                if app.git_status_diff_cursor + 1 < len {
+                    app.git_status_diff_cursor += 1;
+                }
+            } else if app.git_status_cursor + 1 < app.git_status_total_len() {
+                app.git_status_cursor += 1;
+                app.fetch_git_status_diff();
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+fn handle_git_tree(
+    app: &mut AppState,
+    key_event: KeyEvent,
+    message: &mut String,
+) -> Option<Vec<String>> {
+    match key_event.code {
+        KeyCode::Tab => {
+            app.git_panel_focused = !app.git_panel_focused;
+        }
+        KeyCode::Char('2') | KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+        }
+        KeyCode::Char('1') => {
+            app.enter_git_status_mode();
+        }
+        KeyCode::Char('q') => return Some(vec![]),
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(vec![])
+        }
+        KeyCode::Char('c') => {
+            if app.selected.is_empty() {
+                *message = "No files or directories selected!".to_string();
+            } else {
+                return Some(app.collect_selected_paths());
+            }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
         }
         KeyCode::Char('p') => {
             let added = app.restore_last_selection();
@@ -110,6 +278,147 @@ fn handle_git_tree(
     None
 }
 
+fn handle_rg_focused(app: &mut AppState, key_event: KeyEvent) -> Option<Vec<String>> {
+    match key_event.code {
+        KeyCode::Esc => {
+            app.exit_rg();
+        }
+        KeyCode::Backspace => {
+            app.pop_rg_char();
+        }
+        KeyCode::Enter | KeyCode::Down | KeyCode::Up => {
+            if !app.rg_results.is_empty() {
+                app.mode = AppMode::RgNavigating;
+                // Navigation always starts on the Files (left) panel.
+                app.rg_files_focused = true;
+            }
+        }
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(vec![]);
+        }
+        KeyCode::Char(c) => {
+            app.push_rg_char(c);
+        }
+        _ => {}
+    }
+    None
+}
+fn handle_rg_navigating(
+    app: &mut AppState,
+    key_event: KeyEvent,
+    message: &mut String,
+) -> Option<Vec<String>> {
+    match key_event.code {
+        KeyCode::Char('q') => return Some(vec![]),
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(vec![]);
+        }
+        KeyCode::Char('c') => {
+            if app.selected.is_empty() {
+                *message = "No files or directories selected!".to_string();
+            } else {
+                return Some(app.collect_selected_paths());
+            }
+        }
+        KeyCode::Tab => {
+            app.rg_files_focused = !app.rg_files_focused;
+        }
+        KeyCode::Char('y') => {
+            if app.rg_files_focused {
+                // Left panel: copy every match line belonging to *selected*
+                // files (those marked ✓ via Space/Enter). This gathers all
+                // "selection lines" from the right panel across every
+                // selected file — not just the highlighted file's matches.
+                let selected_matches: Vec<String> = app
+                    .rg_results
+                    .iter()
+                    .filter(|r| app.selected.contains(&r.path))
+                    .map(|r| {
+                        format!("{}:{}:{}", r.path.display(), r.line_number, r.line_content)
+                    })
+                    .collect();
+                if selected_matches.is_empty() {
+                    *message =
+                        "No selected files — press Space on a file/match to select first."
+                            .to_string();
+                } else {
+                    let count = selected_matches.len();
+                    let text = selected_matches.join("\n");
+                    match crate::tui::copy_text_to_clipboard(&text) {
+                        Ok(()) => {
+                            *message = format!(
+                                "Copied {count} selected match line(s) to clipboard."
+                            );
+                        }
+                        Err(e) => *message = format!("Failed to copy: {e}"),
+                    }
+                }
+            } else if let Some(result) = app.rg_results.get(app.rg_cursor) {
+                // Right panel: copy just the single highlighted match line.
+                let text = format!(
+                    "{}:{}:{}",
+                    result.path.display(),
+                    result.line_number,
+                    result.line_content
+                );
+                match crate::tui::copy_text_to_clipboard(&text) {
+                    Ok(()) => *message = "Copied result to clipboard.".to_string(),
+                    Err(e) => *message = format!("Failed to copy: {e}"),
+                }
+            }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
+        }
+        KeyCode::Char('\'') => {
+            app.mode = AppMode::RgFocused;
+        }
+        KeyCode::Esc => {
+            app.exit_rg();
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if app.rg_files_focused {
+                let files = app.rg_match_files();
+                if let Some(path) = files.get(app.rg_file_cursor) {
+                    let path = path.clone();
+                    app.toggle_selection(path, false);
+                }
+            } else if let Some(result) = app.rg_results.get(app.rg_cursor) {
+                let path = result.path.clone();
+                app.toggle_selection(path, false);
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.rg_files_focused {
+                app.rg_file_cursor_up();
+            } else if app.rg_cursor > 0 {
+                app.rg_cursor -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.rg_files_focused {
+                app.rg_file_cursor_down();
+            } else if app.rg_cursor + 1 < app.rg_results.len() {
+                app.rg_cursor += 1;
+            }
+        }
+        KeyCode::Char('p') => {
+            let added = app.restore_last_selection();
+            *message = if added > 0 {
+                format!(
+                    "Restored last selection (+{added} file{}).",
+                    if added == 1 { "" } else { "s" }
+                )
+            } else {
+                "No previous selection in this session.".to_string()
+            };
+        }
+        _ => {}
+    }
+    None
+}
+
 fn handle_search_focused(app: &mut AppState, key_event: KeyEvent) -> Option<Vec<String>> {
     match key_event.code {
         KeyCode::Esc => {
@@ -145,6 +454,10 @@ fn handle_search_navigating(
             } else {
                 return Some(app.collect_selected_paths());
             }
+        }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
         }
         KeyCode::Char('/') => {
             app.mode = AppMode::SearchFocused;
@@ -240,7 +553,7 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                 }
             }
         }
-        MouseEventKind::ScrollDown => {
+       MouseEventKind::ScrollDown => {
             if app.mode == AppMode::Normal {
                 app.tree_state.scroll_down(1);
             } else if app.mode == AppMode::GitTree {
@@ -251,6 +564,16 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                     }
                 } else if app.git_files_cursor + 1 < app.git_files.len() {
                     app.git_files_cursor += 1;
+                }
+            } else if app.mode == AppMode::GitStatus {
+                if app.git_status_diff_focused {
+                    let len = app.git_status_diff_content.lines().count();
+                    if app.git_status_diff_cursor + 1 < len {
+                        app.git_status_diff_cursor += 1;
+                    }
+                } else if app.git_status_cursor + 1 < app.git_status_total_len() {
+                    app.git_status_cursor += 1;
+                    app.fetch_git_status_diff();
                 }
             } else if app.search_cursor + 1 < app.search_results.len() {
                 app.search_cursor += 1;
@@ -268,6 +591,15 @@ pub fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent, _message: &mut 
                     }
                 } else if app.git_files_cursor > 0 {
                     app.git_files_cursor -= 1;
+                }
+            } else if app.mode == AppMode::GitStatus {
+                if app.git_status_diff_focused {
+                    if app.git_status_diff_cursor > 0 {
+                        app.git_status_diff_cursor -= 1;
+                    }
+                } else if app.git_status_cursor > 0 {
+                    app.git_status_cursor -= 1;
+                    app.fetch_git_status_diff();
                 }
             } else if app.search_cursor > 0 {
                 app.search_cursor -= 1;
@@ -304,8 +636,15 @@ fn handle_normal(
                 return Some(app.collect_selected_paths());
             }
         }
+        KeyCode::Char('m') => {
+            app.aider = !app.aider;
+            message.clear();
+        }
         KeyCode::Char('/') => {
             app.enter_search();
+        }
+        KeyCode::Char('\'') => {
+            app.enter_rg();
         }
         KeyCode::Char('f') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
             app.enter_search();
@@ -364,8 +703,11 @@ fn handle_normal(
                 "No previous selection in this session.".to_string()
             };
         }
-        KeyCode::Tab => {
+       KeyCode::Tab | KeyCode::Char('2') => {
             app.enter_git_tree_mode();
+        }
+        KeyCode::Char('1') => {
+            app.enter_git_status_mode();
         }
         _ => {}
     }
