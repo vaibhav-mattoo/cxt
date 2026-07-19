@@ -325,22 +325,31 @@ fn handle_rg_navigating(
         }
         KeyCode::Char('y') => {
             if app.rg_files_focused {
-                // Left panel: copy every match belonging to the highlighted
-                // file, since a single right-panel line wouldn't correspond
-                // to what's actually highlighted here.
-                let files = app.rg_match_files();
-                if let Some(path) = files.get(app.rg_file_cursor) {
-                    let text: String = app
-                        .rg_results
-                        .iter()
-                        .filter(|r| &r.path == path)
-                        .map(|r| {
-                            format!("{}:{}:{}", r.path.display(), r.line_number, r.line_content)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                // Left panel: copy every match line belonging to *selected*
+                // files (those marked ✓ via Space/Enter). This gathers all
+                // "selection lines" from the right panel across every
+                // selected file — not just the highlighted file's matches.
+                let selected_matches: Vec<String> = app
+                    .rg_results
+                    .iter()
+                    .filter(|r| app.selected.contains(&r.path))
+                    .map(|r| {
+                        format!("{}:{}:{}", r.path.display(), r.line_number, r.line_content)
+                    })
+                    .collect();
+                if selected_matches.is_empty() {
+                    *message =
+                        "No selected files — press Space on a file/match to select first."
+                            .to_string();
+                } else {
+                    let count = selected_matches.len();
+                    let text = selected_matches.join("\n");
                     match crate::tui::copy_text_to_clipboard(&text) {
-                        Ok(()) => *message = "Copied file matches to clipboard.".to_string(),
+                        Ok(()) => {
+                            *message = format!(
+                                "Copied {count} selected match line(s) to clipboard."
+                            );
+                        }
                         Err(e) => *message = format!("Failed to copy: {e}"),
                     }
                 }
