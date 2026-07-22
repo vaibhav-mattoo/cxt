@@ -429,7 +429,15 @@ impl AppState {
         }
 
         let output = std::process::Command::new("git")
-            .args(["diff-tree", "--no-commit-id", "-p", "--root", &hash, "--", &file])
+            .args([
+                "diff-tree",
+                "--no-commit-id",
+                "-p",
+                "--root",
+                &hash,
+                "--",
+                &file,
+            ])
             .output();
 
         self.git_diff_content = match output {
@@ -768,7 +776,9 @@ pub fn read_dir_sorted(dir: &PathBuf, respect_gitignore: bool) -> io::Result<Vec
         })
         .collect();
     entries.sort_unstable_by(|a, b| {
-        (!a.is_dir()).cmp(&(!b.is_dir())).then_with(|| a.file_name().cmp(b.file_name()))
+        (!a.is_dir())
+            .cmp(&(!b.is_dir()))
+            .then_with(|| a.file_name().cmp(b.file_name()))
     });
     Ok(entries)
 }

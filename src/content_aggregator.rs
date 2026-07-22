@@ -138,7 +138,9 @@ impl ContentAggregator {
             cwd.join(path)
         };
         let is_dir = path.is_dir();
-        gitignore.matched_path_or_any_parents(&abs, is_dir).is_ignore()
+        gitignore
+            .matched_path_or_any_parents(&abs, is_dir)
+            .is_ignore()
     }
 
     /// Returns true if `path` passes the extension filter.
@@ -153,7 +155,7 @@ impl ContentAggregator {
         }
     }
 
-    pub fn aggregate_paths<W: Write>(&mut self, paths: &[String], writer: &mut W) -> Result<()> {
+    pub fn aggregate_paths(&mut self, paths: &[String], writer: &mut dyn Write) -> Result<()> {
         writer.write_all(self.formatter.document_start().as_bytes())?;
         for path_str in paths {
             let path = Path::new(path_str);
@@ -186,11 +188,11 @@ impl ContentAggregator {
     /// Try to handle `read_path` as a Jupyter notebook.
     /// Returns Ok(true) if it was handled (written or deliberately skipped),
     /// Ok(false) if the caller should fall back to normal raw-text handling.
-    fn try_write_notebook<W: Write>(
+    fn try_write_notebook(
         &mut self,
         read_path: &Path,
         display_path: &Path,
-        writer: &mut W,
+        writer: &mut dyn Write,
     ) -> Result<bool> {
         let size = read_path.metadata().map(|m| m.len()).unwrap_or(0);
         if size > crate::notebook::MAX_NOTEBOOK_BYTES {
@@ -203,7 +205,10 @@ impl ContentAggregator {
         let bytes = match fs::read(read_path) {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("Warning: Failed to read file '{}': {e}", read_path.display());
+                eprintln!(
+                    "Warning: Failed to read file '{}': {e}",
+                    read_path.display()
+                );
                 return Ok(true); // skip; raw path would also fail
             }
         };
@@ -227,7 +232,7 @@ impl ContentAggregator {
     }
 
     /// Aggregate a single file; canonicalises path before passing to formatter.
-    fn aggregate_file<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
+    fn aggregate_file(&mut self, path: &Path, writer: &mut dyn Write) -> Result<()> {
         if !self.extension_allowed(path) {
             return Ok(());
         }
@@ -284,7 +289,7 @@ impl ContentAggregator {
 
     /// Like `aggregate_file` but skips `canonicalize()` — path is already canonical.
     /// Called from `aggregate_directory` which pre-canonicalises the base directory once.
-    fn aggregate_file_precanon<W: Write>(&mut self, path: &Path, writer: &mut W) -> Result<()> {
+    fn aggregate_file_precanon(&mut self, path: &Path, writer: &mut dyn Write) -> Result<()> {
         if is_notebook(path) && self.try_write_notebook(path, path, writer)? {
             return Ok(());
         }
@@ -337,7 +342,7 @@ impl ContentAggregator {
 
     /// Walk `dir_path` in parallel, read file contents in parallel, sort for
     /// determinism, then write each file sequentially to the output stream.
-    fn aggregate_directory<W: Write>(&mut self, dir_path: &Path, writer: &mut W) -> Result<()> {
+    fn aggregate_directory(&mut self, dir_path: &Path, writer: &mut dyn Write) -> Result<()> {
         use ignore::WalkBuilder;
 
         // Canonicalise once here; all paths returned by the walker are prefixed with
@@ -441,10 +446,7 @@ impl ContentAggregator {
                             self.token_count +=
                                 crate::token_counter::estimate_from_bytes(file_size);
                             if let Err(e) = std::io::copy(&mut file, writer) {
-                                eprintln!(
-                                    "Warning: Failed to copy file '{}': {e}",
-                                    path.display()
-                                );
+                                eprintln!("Warning: Failed to copy file '{}': {e}", path.display());
                             }
                             writer.write_all(self.formatter.file_footer().as_bytes())?;
                             self.file_count += 1;
@@ -488,13 +490,19 @@ impl ContentAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::PathHeader;
     use crate::formatter::{build_formatter, FormatChoice};
     use std::fs;
     use tempfile::tempdir;
 
     fn xml_aggregator(no_path: bool) -> ContentAggregator {
+        let header = if no_path {
+            PathHeader::None
+        } else {
+            PathHeader::Absolute
+        };
         ContentAggregator::new(
-            build_formatter(FormatChoice::Xml, no_path, false),
+            build_formatter(FormatChoice::Xml, header),
             false,
             vec![],
             true,
@@ -567,8 +575,7 @@ mod tests {
     fn test_aggregate_nonexistent_path() {
         let mut aggregator = xml_aggregator(false);
         let mut buffer = Vec::new();
-        let result =
-            aggregator.aggregate_paths(&["nonexistent_file.txt".to_string()], &mut buffer);
+        let result = aggregator.aggregate_paths(&["nonexistent_file.txt".to_string()], &mut buffer);
 
         assert!(result.is_err());
         assert!(result
@@ -608,7 +615,7 @@ mod tests {
         fs::write(&hidden_file, "Hidden content").unwrap();
 
         let mut aggregator = ContentAggregator::new(
-            build_formatter(FormatChoice::Xml, false, false),
+            build_formatter(FormatChoice::Xml, PathHeader::Absolute),
             true,
             vec![],
             true,

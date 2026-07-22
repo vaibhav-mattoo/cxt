@@ -1,4 +1,6 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Position;
 use std::path::PathBuf;
 
@@ -46,7 +48,10 @@ fn handle_git_tree(
         KeyCode::Char('p') => {
             let added = app.restore_last_selection();
             *message = if added > 0 {
-                format!("Restored last selection (+{added} file{}).", if added == 1 { "" } else { "s" })
+                format!(
+                    "Restored last selection (+{added} file{}).",
+                    if added == 1 { "" } else { "s" }
+                )
             } else {
                 "No previous selection in this session.".to_string()
             };
@@ -170,9 +175,7 @@ fn handle_search_navigating(
         KeyCode::Up | KeyCode::Char('k') if app.search_cursor > 0 => {
             app.search_cursor -= 1;
         }
-        KeyCode::Down | KeyCode::Char('j')
-            if app.search_cursor + 1 < app.search_results.len() =>
-        {
+        KeyCode::Down | KeyCode::Char('j') if app.search_cursor + 1 < app.search_results.len() => {
             app.search_cursor += 1;
         }
         KeyCode::Char(' ') => {
@@ -196,7 +199,10 @@ fn handle_search_navigating(
         KeyCode::Char('p') => {
             let added = app.restore_last_selection();
             *message = if added > 0 {
-                format!("Restored last selection (+{added} file{}).", if added == 1 { "" } else { "s" })
+                format!(
+                    "Restored last selection (+{added} file{}).",
+                    if added == 1 { "" } else { "s" }
+                )
             } else {
                 "No previous selection in this session.".to_string()
             };
@@ -359,7 +365,10 @@ fn handle_normal(
         KeyCode::Char('p') => {
             let added = app.restore_last_selection();
             *message = if added > 0 {
-                format!("Restored last selection (+{added} file{}).", if added == 1 { "" } else { "s" })
+                format!(
+                    "Restored last selection (+{added} file{}).",
+                    if added == 1 { "" } else { "s" }
+                )
             } else {
                 "No previous selection in this session.".to_string()
             };

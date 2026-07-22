@@ -62,7 +62,14 @@ pub fn draw(
     } else {
         render_file_list(f, app, chunks[1], inner_list_height as usize);
     }
-    render_status_bar(f, chunks[2], message, file_count, loc_count, app.mode == AppMode::GitTree);
+    render_status_bar(
+        f,
+        chunks[2],
+        message,
+        file_count,
+        loc_count,
+        app.mode == AppMode::GitTree,
+    );
     if app.show_help {
         render_help_overlay(f, f.area());
     }
@@ -365,7 +372,14 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
 
-fn render_status_bar(f: &mut Frame, area: Rect, message: &str, file_count: usize, loc_count: u64, is_git_mode: bool) {
+fn render_status_bar(
+    f: &mut Frame,
+    area: Rect,
+    message: &str,
+    file_count: usize,
+    loc_count: u64,
+    is_git_mode: bool,
+) {
     let hint_str = if is_git_mode {
         "space select   d toggle diff   c copy   ? help   q quit "
     } else {

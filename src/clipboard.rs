@@ -82,7 +82,10 @@ fn spawn_process_writer(program: &str, args: &[&str]) -> Result<Box<dyn Write>> 
     };
     // BufWriter flushes on drop before ProcessWriter drops, which is the correct order:
     // flush remaining bytes → close stdin (EOF) → wait for child process.
-    Ok(Box::new(BufWriter::with_capacity(256 * 1024, process_writer)))
+    Ok(Box::new(BufWriter::with_capacity(
+        256 * 1024,
+        process_writer,
+    )))
 }
 
 /// Transparent writer that converts bare LF → CRLF (required by Windows clip.exe).

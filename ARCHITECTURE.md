@@ -9,7 +9,7 @@ flowchart TD
 
     %% ─── CLI ───
     subgraph CLI_LAYER["CLI Layer"]
-        args["cli.rs · Args\n──────────────────\npaths, print, write\nrelative, no_path\nhidden, tui, ci\nignore, ext, lang\nno_sort, compress\nformat, df, st"]
+        args["cli.rs · Args (flattened)\n──────────────────────────────\nSourceArgs: tui, df, st\nSelectArgs: ignore, ext, lang,\n  hidden, no_sort\nRenderArgs: relative, no_path,\n  format\nOutputArgs: print, write,\n  compress, ci\nEnums: PathHeader, Destination,\n  Mode\nAccessors: mode(), validate(),\n  header(), destination()"]
     end
 
     %% ─── Modes ───
@@ -182,15 +182,15 @@ flowchart TD
 
 | Module | File | Responsibility |
 |--------|------|---------------|
-| **CLI Args** | `cli.rs` | All command-line flags via `clap` |
+| **CLI Args** | `cli.rs` | `Args` flattened into `SourceArgs`, `SelectArgs`, `RenderArgs`, `OutputArgs`; enums `PathHeader`, `Destination`, `Mode`; accessors `mode()`, `header()`, `destination()` |
 | **Main** | `main.rs` | Entry point, routing, brace expansion, summary output |
 | **Content Aggregator** | `content_aggregator.rs` | Parallel file walking, binary detection, aggregation |
-| **Formatter** | `formatter.rs` | XML or Markdown output formatting (trait + two impls) |
+| **Formatter** | `formatter.rs` | XML or Markdown output formatting (trait + two impls); `build_formatter(choice, PathHeader)` |
 | **Token Counter** | `token_counter.rs` | BPE tokenization via `tiktoken-rs`, with estimation fallback |
 | **Language Defs** | `lang.rs` | 35+ language → extension mappings for `--lang` filtering |
 | **Notebook Handler** | `notebook.rs` | Jupyter `.ipynb` code-cell extraction (nbformat 2–4) |
 | **Image Handler** | `image_handler.rs` | Decode any image format, re-encode to PNG for clipboard |
-| **Output Handler** | `output_handler.rs` | Platform detection, backend chain assembly |
+| **Output Handler** | `output_handler.rs` | Platform detection, backend chain assembly; `impl Destination { write_with, requires_clipboard }` owns TeeWriter, GzEncoder, and clipboard finish |
 | **Clipboard** | `clipboard.rs` | `ClipboardBackend` trait + all platform implementations |
 | **TUI mod** | `tui/mod.rs` | Terminal init, main event loop, session cache |
 | **TUI App State** | `tui/app.rs` | `AppState` struct, directory lazy-loading, git integration |

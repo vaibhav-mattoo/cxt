@@ -43,14 +43,13 @@ pub fn check_image_mode(paths: &[String]) -> anyhow::Result<bool> {
 /// Decode `path`, re-encode as PNG for maximum paste compatibility, and write
 /// it to the system clipboard. Prints a confirmation line to stdout on success.
 pub fn copy_image_to_clipboard(path: &std::path::Path) -> anyhow::Result<()> {
-    let img = image::open(path)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to open image '{}': {e}\n\
+    let img = image::open(path).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to open image '{}': {e}\n\
                  Supported formats: JPEG, PNG, GIF, BMP, WebP, TIFF, ICO",
-                path.display()
-            )
-        })?;
+            path.display()
+        )
+    })?;
 
     let (width, height) = img.dimensions();
 
