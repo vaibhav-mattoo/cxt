@@ -16,8 +16,7 @@ struct Block {
 /// fuzzy-match confirmation prompt.
 pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
     println!("📋 Reading and cleaning content from clipboard...");
-    let clipboard = crate::clipboard::read_clipboard()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let clipboard = crate::clipboard::read_clipboard().map_err(|e| anyhow::anyhow!("{e}"))?;
     let patch_content = sanitize_llm_output(&clipboard, debug_mode);
 
     if !patch_content
@@ -160,10 +159,7 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
             if let Some(idx) = index {
                 if similarity >= 0.7 {
                     let mut new_lines = original_lines.clone();
-                    new_lines.splice(
-                        idx..idx + search_lines.len(),
-                        replace_lines.iter().cloned(),
-                    );
+                    new_lines.splice(idx..idx + search_lines.len(), replace_lines.iter().cloned());
                     let new_content = new_lines.join("\n");
 
                     let match_percent = (similarity * 100.0).round() as i32;
@@ -217,10 +213,7 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
         if file_changed {
             match fs::write(&target_file, &current_content) {
                 Ok(_) => println!("\n💾 Wrote all approved Hunks to {}", target_file),
-                Err(e) => eprintln!(
-                    "\n❌ Failed to write file {}: {}",
-                    target_file, e
-                ),
+                Err(e) => eprintln!("\n❌ Failed to write file {}: {}", target_file, e),
             }
         } else {
             println!("\n🚫 {} unchanged", target_file);
@@ -262,10 +255,7 @@ fn sanitize_llm_output(text: &str, debug_mode: bool) -> String {
                 || prev_line.starts_with("File: ")
             {
                 clean_lines.push(prev_line.to_string());
-                log.push_str(&format!(
-                    "[Sanitize] Extracted file path: {}\n",
-                    prev_line
-                ));
+                log.push_str(&format!("[Sanitize] Extracted file path: {}\n", prev_line));
             } else {
                 clean_lines.push("// unknown_file".to_string());
                 log.push_str("[Sanitize] No file path extracted, using unknown_file\n");

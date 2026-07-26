@@ -1,4 +1,3 @@
-use crate::platform;
 use anyhow::Result;
 use std::env;
 use std::io::{self, Write};
@@ -94,11 +93,7 @@ impl OutputHandler {
         let mut chain: Vec<Box<dyn ClipboardBackend>> = Vec::new();
 
         #[cfg(target_os = "macos")]
-        #[cfg(target_os = "macos")]
-        {
-            chain.push(Box::new(clipboard::PbcopyBackend));
-            chain.push(Box::new(ArboardBackend::new()));
-        }
+        chain.push(Box::new(clipboard::PbcopyBackend));
 
         #[cfg(target_os = "windows")]
         chain.push(Box::new(ArboardBackend::new()));
@@ -110,9 +105,8 @@ impl OutputHandler {
             target_os = "netbsd"
         ))]
         {
-            if platform::is_wsl() {
+            if env::var("WSL_DISTRO_NAME").is_ok() || env::var("WSL_ENV").is_ok() {
                 chain.push(Box::new(clipboard::WslBackend));
-                chain.push(Box::new(ArboardBackend::new()));
                 return chain;
             }
 
@@ -160,24 +154,6 @@ impl OutputHandler {
             "No supported clipboard tool found. \
              Install one of: wl-clipboard, xclip, copyq, clipman, cliphist, \
              gpaste-client, or ensure arboard can connect to a display."
-        ))
-    }
-
-    /// Try each backend in chain order; the first that supports images wins.
-    pub fn copy_image_to_clipboard(&mut self, png_bytes: &[u8]) -> Result<()> {
-        for mut backend in self.backends.drain(..) {
-            if !backend.is_available() {
-                continue;
-            }
-            match backend.write_image(png_bytes) {
-                Ok(()) => return Ok(()),
-                Err(_) => continue,
-            }
-        }
-        Err(anyhow::anyhow!(
-            "No clipboard backend supports images. \
-             Install wl-clipboard or xclip, or ensure arboard can connect \
-             to a display."
         ))
     }
 }

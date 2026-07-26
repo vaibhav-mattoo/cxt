@@ -1,4 +1,3 @@
-use crate::platform;
 use anyhow::Result;
 use std::cell::RefCell;
 use std::io::{self, BufWriter, Write};
@@ -13,11 +12,6 @@ pub trait ClipboardBackend {
     fn get_writer(&mut self) -> Result<Box<dyn Write>>;
     fn flush_to_clipboard(&mut self) -> Result<()> {
         Ok(())
-    }
-    /// Write PNG image data to the clipboard.
-    /// Only overridden by backends that support images (wl-copy, xclip, arboard).
-    fn write_image(&mut self, _png_bytes: &[u8]) -> Result<()> {
-        anyhow::bail!("backend does not support image clipboard")
     }
 }
 
@@ -121,54 +115,121 @@ impl<W: Write> Write for CrlfWriter<W> {
     }
 }
 
-/// Spawn `program`, write `data` to its stdin, close stdin, then return without
-/// waiting. The child continues running as a persistent clipboard server
-/// (wl-copy / xclip model — they exit only when the clipboard is replaced).
-fn pipe_bytes_to_process(program: &str, args: &[&str], data: &[u8]) -> Result<()> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::piped())
+fn command_available(program: &str) -> bool {
+    Command::new("which")
+        .arg(program)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()?;
-    {
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(data)?;
-    }
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    drop(child);
-    Ok(())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 // ── Backends ─────────────────────────────────────────────────────────────────
 
+pub fn read_clipboard() -> Result<String> {
+    // macOS: pbpaste
+    #[cfg(target_os = "macos")]
+    {
+        if command_available("pbpaste") {
+            if let Ok(output) = Command::new("pbpaste").output() {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                }
+            }
+        }
+    }
+
+    // Linux / *BSD family
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        // WSL — try first since it's the most specific environment
+        if std::env::var("WSL_DISTRO_NAME").is_ok() || std::env::var("WSL_ENV").is_ok() {
+            if let Ok(output) = Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-Clipboard -Raw",
+                ])
+                .output()
+            {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                }
+            }
+        }
+
+        // Wayland
+        let session_type = std::env::var("XDG_SESSION_TYPE")
+            .unwrap_or_default()
+            .to_lowercase();
+        let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap_or_default();
+        if (session_type == "wayland" || !wayland_display.is_empty())
+            && command_available("wl-paste")
+        {
+            if let Ok(output) = Command::new("wl-paste").output() {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                }
+            }
+        }
+
+        // X11
+        if !std::env::var("DISPLAY").unwrap_or_default().is_empty() {
+            if command_available("xclip") {
+                if let Ok(output) = Command::new("xclip")
+                    .args(["-selection", "clipboard", "-o"])
+                    .output()
+                {
+                    if output.status.success() {
+                        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                    }
+                }
+            }
+            if command_available("xsel") {
+                if let Ok(output) = Command::new("xsel")
+                    .args(["--clipboard", "--output"])
+                    .output()
+                {
+                    if output.status.success() {
+                        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                    }
+                }
+            }
+        }
+    }
+
+    // Windows / fallback: arboard
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| anyhow::anyhow!("Failed to open clipboard: {e}"))?;
+    clipboard
+        .get_text()
+        .map_err(|e| anyhow::anyhow!("arboard get_text failed: {e}"))
+}
+
 pub struct WlCopyBackend;
 impl ClipboardBackend for WlCopyBackend {
     fn is_available(&self) -> bool {
-        platform::command_available("wl-copy")
+        command_available("wl-copy")
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer("wl-copy", &[])
-    }
-    fn write_image(&mut self, png_bytes: &[u8]) -> Result<()> {
-        pipe_bytes_to_process("wl-copy", &["--type", "image/png"], png_bytes)
     }
 }
 
 pub struct X11Backend;
 impl ClipboardBackend for X11Backend {
     fn is_available(&self) -> bool {
-        platform::has_x11_display() && platform::command_available("xclip")
+        !std::env::var("DISPLAY").unwrap_or_default().is_empty() && command_available("xclip")
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer("xclip", &["-selection", "clipboard"])
-    }
-    fn write_image(&mut self, png_bytes: &[u8]) -> Result<()> {
-        pipe_bytes_to_process(
-            "xclip",
-            &["-selection", "clipboard", "-t", "image/png"],
-            png_bytes,
-        )
     }
 }
 
@@ -176,10 +237,9 @@ impl ClipboardBackend for X11Backend {
 pub struct PbcopyBackend;
 
 #[cfg(target_os = "macos")]
-#[cfg(target_os = "macos")]
 impl ClipboardBackend for PbcopyBackend {
     fn is_available(&self) -> bool {
-        platform::command_available("pbcopy")
+        command_available("pbcopy")
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer("pbcopy", &[])
@@ -250,28 +310,6 @@ impl ClipboardBackend for ArboardBackend {
         }
         Err(anyhow::anyhow!("Clipboard not available on this system"))
     }
-
-    fn write_image(&mut self, png_bytes: &[u8]) -> Result<()> {
-        let img = image::load_from_memory(png_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to decode PNG for clipboard: {e}"))?;
-        let rgba = img.to_rgba8();
-        let (width, height) = rgba.dimensions();
-        if self.clipboard.is_none() {
-            self.clipboard = arboard::Clipboard::new().ok();
-        }
-        if let Some(ref mut clipboard) = self.clipboard {
-            clipboard
-                .set_image(arboard::ImageData {
-                    width: width as usize,
-                    height: height as usize,
-                    bytes: rgba.into_raw().into(),
-                })
-                .map_err(|e| anyhow::anyhow!("arboard set_image failed: {e}"))?;
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            return Ok(());
-        }
-        Err(anyhow::anyhow!("Clipboard not available on this system"))
-    }
 }
 
 /// Generic backend for clipboard managers (copyq, clipman, cliphist, etc.).
@@ -288,38 +326,9 @@ impl NamedProcessBackend {
 
 impl ClipboardBackend for NamedProcessBackend {
     fn is_available(&self) -> bool {
-        platform::command_available(self.program)
+        command_available(self.program)
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer(self.program, self.args)
     }
-}
-
-/// Read text content from the system clipboard.
-/// Tries platform-native clipboard tools first (pbpaste, wl-paste, xclip, xsel),
-/// then falls back to arboard.
-pub fn read_clipboard() -> Result<String, String> {
-    let candidates: &[(&str, &[&str])] = &[
-        ("pbpaste", &[]),
-        ("wl-paste", &[]),
-        ("xclip", &["-selection", "clipboard", "-o"]),
-        ("xsel", &["--clipboard", "--output"]),
-    ];
-
-    for (bin, args) in candidates {
-        if let Ok(out) = Command::new(bin).args(*args).output() {
-            if out.status.success() || !out.stdout.is_empty() {
-                return Ok(String::from_utf8_lossy(&out.stdout).to_string());
-            }
-        }
-    }
-
-    // Fallback: arboard (works on Windows, macOS, and Linux with display)
-    if let Ok(mut clipboard) = arboard::Clipboard::new() {
-        if let Ok(text) = clipboard.get_text() {
-            return Ok(text);
-        }
-    }
-
-    Err("Failed to read clipboard. Install one of: pbpaste, wl-paste, xclip, xsel".to_string())
 }
