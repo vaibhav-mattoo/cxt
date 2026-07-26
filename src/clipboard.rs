@@ -1,3 +1,4 @@
+use crate::platform;
 use anyhow::Result;
 use std::cell::RefCell;
 use std::io::{self, BufWriter, Write};
@@ -12,6 +13,11 @@ pub trait ClipboardBackend {
     fn get_writer(&mut self) -> Result<Box<dyn Write>>;
     fn flush_to_clipboard(&mut self) -> Result<()> {
         Ok(())
+    }
+    /// Write PNG image data to the clipboard.
+    /// Only overridden by backends that support images (wl-copy, xclip, arboard).
+    fn write_image(&mut self, _png_bytes: &[u8]) -> Result<()> {
+        anyhow::bail!("backend does not support image clipboard")
     }
 }
 
@@ -82,7 +88,10 @@ fn spawn_process_writer(program: &str, args: &[&str]) -> Result<Box<dyn Write>> 
     };
     // BufWriter flushes on drop before ProcessWriter drops, which is the correct order:
     // flush remaining bytes → close stdin (EOF) → wait for child process.
-    Ok(Box::new(BufWriter::with_capacity(256 * 1024, process_writer)))
+    Ok(Box::new(BufWriter::with_capacity(
+        256 * 1024,
+        process_writer,
+    )))
 }
 
 /// Transparent writer that converts bare LF → CRLF (required by Windows clip.exe).
@@ -112,14 +121,23 @@ impl<W: Write> Write for CrlfWriter<W> {
     }
 }
 
-fn command_available(program: &str) -> bool {
-    Command::new("which")
-        .arg(program)
+/// Spawn `program`, write `data` to its stdin, close stdin, then return without
+/// waiting. The child continues running as a persistent clipboard server
+/// (wl-copy / xclip model — they exit only when the clipboard is replaced).
+fn pipe_bytes_to_process(program: &str, args: &[&str], data: &[u8]) -> Result<()> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .spawn()?;
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(data)?;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    drop(child);
+    Ok(())
 }
 
 // ── Backends ─────────────────────────────────────────────────────────────────
@@ -127,20 +145,30 @@ fn command_available(program: &str) -> bool {
 pub struct WlCopyBackend;
 impl ClipboardBackend for WlCopyBackend {
     fn is_available(&self) -> bool {
-        command_available("wl-copy")
+        platform::command_available("wl-copy")
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer("wl-copy", &[])
+    }
+    fn write_image(&mut self, png_bytes: &[u8]) -> Result<()> {
+        pipe_bytes_to_process("wl-copy", &["--type", "image/png"], png_bytes)
     }
 }
 
 pub struct X11Backend;
 impl ClipboardBackend for X11Backend {
     fn is_available(&self) -> bool {
-        !std::env::var("DISPLAY").unwrap_or_default().is_empty() && command_available("xclip")
+        platform::has_x11_display() && platform::command_available("xclip")
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer("xclip", &["-selection", "clipboard"])
+    }
+    fn write_image(&mut self, png_bytes: &[u8]) -> Result<()> {
+        pipe_bytes_to_process(
+            "xclip",
+            &["-selection", "clipboard", "-t", "image/png"],
+            png_bytes,
+        )
     }
 }
 
@@ -148,9 +176,10 @@ impl ClipboardBackend for X11Backend {
 pub struct PbcopyBackend;
 
 #[cfg(target_os = "macos")]
+#[cfg(target_os = "macos")]
 impl ClipboardBackend for PbcopyBackend {
     fn is_available(&self) -> bool {
-        command_available("pbcopy")
+        platform::command_available("pbcopy")
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer("pbcopy", &[])
@@ -221,6 +250,28 @@ impl ClipboardBackend for ArboardBackend {
         }
         Err(anyhow::anyhow!("Clipboard not available on this system"))
     }
+
+    fn write_image(&mut self, png_bytes: &[u8]) -> Result<()> {
+        let img = image::load_from_memory(png_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to decode PNG for clipboard: {e}"))?;
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        if self.clipboard.is_none() {
+            self.clipboard = arboard::Clipboard::new().ok();
+        }
+        if let Some(ref mut clipboard) = self.clipboard {
+            clipboard
+                .set_image(arboard::ImageData {
+                    width: width as usize,
+                    height: height as usize,
+                    bytes: rgba.into_raw().into(),
+                })
+                .map_err(|e| anyhow::anyhow!("arboard set_image failed: {e}"))?;
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            return Ok(());
+        }
+        Err(anyhow::anyhow!("Clipboard not available on this system"))
+    }
 }
 
 /// Generic backend for clipboard managers (copyq, clipman, cliphist, etc.).
@@ -237,7 +288,7 @@ impl NamedProcessBackend {
 
 impl ClipboardBackend for NamedProcessBackend {
     fn is_available(&self) -> bool {
-        command_available(self.program)
+        platform::command_available(self.program)
     }
     fn get_writer(&mut self) -> Result<Box<dyn Write>> {
         spawn_process_writer(self.program, self.args)

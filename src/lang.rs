@@ -5,51 +5,199 @@ pub struct LangDef {
 }
 
 pub static LANGUAGES: &[LangDef] = &[
-    LangDef { name: "rust",       aliases: &["rs"],               extensions: &["rs", "toml"] },
-    LangDef { name: "python",     aliases: &["py"],               extensions: &["py", "pyi", "pyw", "ipynb"] },
-    LangDef { name: "javascript", aliases: &["js", "node"],       extensions: &["js", "mjs", "cjs", "jsx"] },
-    LangDef { name: "typescript", aliases: &["ts"],               extensions: &["ts", "tsx", "mts", "cts"] },
-    LangDef { name: "go",         aliases: &[],                   extensions: &["go", "mod", "sum"] },
-    LangDef { name: "java",       aliases: &[],                   extensions: &["java"] },
-    LangDef { name: "c",          aliases: &[],                   extensions: &["c", "h"] },
-    LangDef { name: "cpp",        aliases: &["c++", "cxx"],       extensions: &["cpp", "cxx", "cc", "hpp", "hxx", "h"] },
-    LangDef { name: "csharp",     aliases: &["cs", "c#"],         extensions: &["cs", "csx"] },
-    LangDef { name: "fsharp",     aliases: &["fs", "f#"],         extensions: &["fs", "fsi", "fsx"] },
-    LangDef { name: "ruby",       aliases: &["rb"],               extensions: &["rb", "rake", "gemspec"] },
-    LangDef { name: "php",        aliases: &[],                   extensions: &["php"] },
-    LangDef { name: "swift",      aliases: &[],                   extensions: &["swift"] },
-    LangDef { name: "kotlin",     aliases: &["kt"],               extensions: &["kt", "kts"] },
-    LangDef { name: "scala",      aliases: &[],                   extensions: &["scala", "sc", "sbt"] },
-    LangDef { name: "haskell",    aliases: &["hs"],               extensions: &["hs", "lhs", "cabal"] },
-    LangDef { name: "lua",        aliases: &[],                   extensions: &["lua"] },
-    LangDef { name: "elixir",     aliases: &["ex"],               extensions: &["ex", "exs"] },
-    LangDef { name: "erlang",     aliases: &[],                   extensions: &["erl", "hrl"] },
-    LangDef { name: "clojure",    aliases: &["clj"],              extensions: &["clj", "cljs", "cljc", "edn"] },
-    LangDef { name: "zig",        aliases: &[],                   extensions: &["zig"] },
-    LangDef { name: "dart",       aliases: &[],                   extensions: &["dart"] },
-    LangDef { name: "r",          aliases: &[],                   extensions: &["r", "rmd"] },
-    LangDef { name: "julia",      aliases: &["jl"],               extensions: &["jl"] },
-    LangDef { name: "shell",      aliases: &["bash", "sh"],       extensions: &["sh", "bash", "zsh", "fish", "ps1"] },
-    LangDef { name: "nix",        aliases: &[],                   extensions: &["nix"] },
-    LangDef { name: "terraform",  aliases: &["tf"],               extensions: &["tf", "tfvars"] },
-    LangDef { name: "html",       aliases: &[],                   extensions: &["html", "htm"] },
-    LangDef { name: "css",        aliases: &[],                   extensions: &["css", "scss", "sass", "less"] },
-    LangDef { name: "sql",        aliases: &[],                   extensions: &["sql"] },
-    LangDef { name: "markdown",   aliases: &["md"],               extensions: &["md", "mdx"] },
-    LangDef { name: "yaml",       aliases: &[],                   extensions: &["yaml", "yml"] },
-    LangDef { name: "json",       aliases: &[],                   extensions: &["json", "jsonc"] },
-    LangDef { name: "toml",       aliases: &[],                   extensions: &["toml"] },
-    LangDef { name: "proto",      aliases: &["protobuf"],         extensions: &["proto"] },
-    LangDef { name: "graphql",    aliases: &["gql"],              extensions: &["graphql", "gql"] },
-    LangDef { name: "dockerfile", aliases: &["docker"],           extensions: &["dockerfile"] },
+    LangDef {
+        name: "rust",
+        aliases: &["rs"],
+        extensions: &["rs", "toml"],
+    },
+    LangDef {
+        name: "python",
+        aliases: &["py"],
+        extensions: &["py", "pyi", "pyw", "ipynb"],
+    },
+    LangDef {
+        name: "javascript",
+        aliases: &["js", "node"],
+        extensions: &["js", "mjs", "cjs", "jsx"],
+    },
+    LangDef {
+        name: "typescript",
+        aliases: &["ts"],
+        extensions: &["ts", "tsx", "mts", "cts"],
+    },
+    LangDef {
+        name: "go",
+        aliases: &[],
+        extensions: &["go", "mod", "sum"],
+    },
+    LangDef {
+        name: "java",
+        aliases: &[],
+        extensions: &["java"],
+    },
+    LangDef {
+        name: "c",
+        aliases: &[],
+        extensions: &["c", "h"],
+    },
+    LangDef {
+        name: "cpp",
+        aliases: &["c++", "cxx"],
+        extensions: &["cpp", "cxx", "cc", "hpp", "hxx", "h"],
+    },
+    LangDef {
+        name: "csharp",
+        aliases: &["cs", "c#"],
+        extensions: &["cs", "csx"],
+    },
+    LangDef {
+        name: "fsharp",
+        aliases: &["fs", "f#"],
+        extensions: &["fs", "fsi", "fsx"],
+    },
+    LangDef {
+        name: "ruby",
+        aliases: &["rb"],
+        extensions: &["rb", "rake", "gemspec"],
+    },
+    LangDef {
+        name: "php",
+        aliases: &[],
+        extensions: &["php"],
+    },
+    LangDef {
+        name: "swift",
+        aliases: &[],
+        extensions: &["swift"],
+    },
+    LangDef {
+        name: "kotlin",
+        aliases: &["kt"],
+        extensions: &["kt", "kts"],
+    },
+    LangDef {
+        name: "scala",
+        aliases: &[],
+        extensions: &["scala", "sc", "sbt"],
+    },
+    LangDef {
+        name: "haskell",
+        aliases: &["hs"],
+        extensions: &["hs", "lhs", "cabal"],
+    },
+    LangDef {
+        name: "lua",
+        aliases: &[],
+        extensions: &["lua"],
+    },
+    LangDef {
+        name: "elixir",
+        aliases: &["ex"],
+        extensions: &["ex", "exs"],
+    },
+    LangDef {
+        name: "erlang",
+        aliases: &[],
+        extensions: &["erl", "hrl"],
+    },
+    LangDef {
+        name: "clojure",
+        aliases: &["clj"],
+        extensions: &["clj", "cljs", "cljc", "edn"],
+    },
+    LangDef {
+        name: "zig",
+        aliases: &[],
+        extensions: &["zig"],
+    },
+    LangDef {
+        name: "dart",
+        aliases: &[],
+        extensions: &["dart"],
+    },
+    LangDef {
+        name: "r",
+        aliases: &[],
+        extensions: &["r", "rmd"],
+    },
+    LangDef {
+        name: "julia",
+        aliases: &["jl"],
+        extensions: &["jl"],
+    },
+    LangDef {
+        name: "shell",
+        aliases: &["bash", "sh"],
+        extensions: &["sh", "bash", "zsh", "fish", "ps1"],
+    },
+    LangDef {
+        name: "nix",
+        aliases: &[],
+        extensions: &["nix"],
+    },
+    LangDef {
+        name: "terraform",
+        aliases: &["tf"],
+        extensions: &["tf", "tfvars"],
+    },
+    LangDef {
+        name: "html",
+        aliases: &[],
+        extensions: &["html", "htm"],
+    },
+    LangDef {
+        name: "css",
+        aliases: &[],
+        extensions: &["css", "scss", "sass", "less"],
+    },
+    LangDef {
+        name: "sql",
+        aliases: &[],
+        extensions: &["sql"],
+    },
+    LangDef {
+        name: "markdown",
+        aliases: &["md"],
+        extensions: &["md", "mdx"],
+    },
+    LangDef {
+        name: "yaml",
+        aliases: &[],
+        extensions: &["yaml", "yml"],
+    },
+    LangDef {
+        name: "json",
+        aliases: &[],
+        extensions: &["json", "jsonc"],
+    },
+    LangDef {
+        name: "toml",
+        aliases: &[],
+        extensions: &["toml"],
+    },
+    LangDef {
+        name: "proto",
+        aliases: &["protobuf"],
+        extensions: &["proto"],
+    },
+    LangDef {
+        name: "graphql",
+        aliases: &["gql"],
+        extensions: &["graphql", "gql"],
+    },
+    LangDef {
+        name: "dockerfile",
+        aliases: &["docker"],
+        extensions: &["dockerfile"],
+    },
 ];
 
 /// Look up a language by canonical name or alias (case-insensitive).
 pub fn find(name: &str) -> Option<&'static LangDef> {
     let lower = name.to_lowercase();
-    LANGUAGES.iter().find(|def| {
-        def.name == lower || def.aliases.iter().any(|&a| a == lower)
-    })
+    LANGUAGES
+        .iter()
+        .find(|def| def.name == lower || def.aliases.iter().any(|&a| a == lower))
 }
 
 /// All canonical names, sorted, for use in error messages.

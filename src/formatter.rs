@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::cli::PathHeader;
+
 pub trait Formatter: Send + Sync {
     fn document_start(&self) -> &'static str {
         ""
@@ -21,16 +23,18 @@ pub enum FormatChoice {
     Markdown,
 }
 
-fn resolve_display(path: &Path, relative: bool, cwd: Option<&Path>) -> String {
-    if relative {
-        if let Some(cwd) = cwd {
-            if let Some(rel) = pathdiff::diff_paths(path, cwd) {
-                return rel.display().to_string();
+fn resolve_display(path: &Path, header: PathHeader, cwd: Option<&Path>) -> String {
+    match header {
+        PathHeader::Relative => {
+            if let Some(cwd) = cwd {
+                if let Some(rel) = pathdiff::diff_paths(path, cwd) {
+                    return rel.display().to_string();
+                }
             }
+            path.display().to_string()
         }
-        return path.display().to_string();
+        _ => path.display().to_string(),
     }
-    path.display().to_string()
 }
 
 pub fn language_for_extension(path: &Path) -> &'static str {
@@ -84,23 +88,18 @@ pub fn language_for_extension(path: &Path) -> &'static str {
 }
 
 pub struct XmlFormatter {
-    no_path: bool,
-    relative: bool,
+    header: PathHeader,
     cwd: Option<std::path::PathBuf>,
 }
 
 impl XmlFormatter {
-    pub fn new(no_path: bool, relative: bool) -> Self {
-        let cwd = if relative {
+    pub fn new(header: PathHeader) -> Self {
+        let cwd = if header == PathHeader::Relative {
             std::env::current_dir().ok()
         } else {
             None
         };
-        Self {
-            no_path,
-            relative,
-            cwd,
-        }
+        Self { header, cwd }
     }
 }
 
@@ -118,10 +117,10 @@ impl Formatter for XmlFormatter {
         path: &Path,
         writer: &mut dyn std::io::Write,
     ) -> std::io::Result<()> {
-        if self.no_path {
+        if self.header == PathHeader::None {
             writer.write_all(b"<file>\n")
         } else {
-            let resolved = resolve_display(path, self.relative, self.cwd.as_deref());
+            let resolved = resolve_display(path, self.header, self.cwd.as_deref());
             writeln!(writer, "<file path=\"{resolved}\">")
         }
     }
@@ -132,23 +131,18 @@ impl Formatter for XmlFormatter {
 }
 
 pub struct MarkdownFormatter {
-    no_path: bool,
-    relative: bool,
+    header: PathHeader,
     cwd: Option<std::path::PathBuf>,
 }
 
 impl MarkdownFormatter {
-    pub fn new(no_path: bool, relative: bool) -> Self {
-        let cwd = if relative {
+    pub fn new(header: PathHeader) -> Self {
+        let cwd = if header == PathHeader::Relative {
             std::env::current_dir().ok()
         } else {
             None
         };
-        Self {
-            no_path,
-            relative,
-            cwd,
-        }
+        Self { header, cwd }
     }
 }
 
@@ -159,10 +153,10 @@ impl Formatter for MarkdownFormatter {
         writer: &mut dyn std::io::Write,
     ) -> std::io::Result<()> {
         let lang = language_for_extension(path);
-        if self.no_path {
+        if self.header == PathHeader::None {
             writeln!(writer, "```{lang}")
         } else {
-            let resolved = resolve_display(path, self.relative, self.cwd.as_deref());
+            let resolved = resolve_display(path, self.header, self.cwd.as_deref());
             write!(writer, "## File: {resolved}\n\n```{lang}\n")
         }
     }
@@ -193,23 +187,18 @@ Please apply changes using this aider style format all changed in single code bl
 "#;
 
 pub struct AiderFormatter {
-    no_path: bool,
-    relative: bool,
+    header: PathHeader,
     cwd: Option<std::path::PathBuf>,
 }
 
 impl AiderFormatter {
-    pub fn new(no_path: bool, relative: bool) -> Self {
-        let cwd = if relative {
+    pub fn new(header: PathHeader) -> Self {
+        let cwd = if header == PathHeader::Relative {
             std::env::current_dir().ok()
         } else {
             None
         };
-        Self {
-            no_path,
-            relative,
-            cwd,
-        }
+        Self { header, cwd }
     }
 }
 
@@ -227,10 +216,10 @@ impl Formatter for AiderFormatter {
         path: &Path,
         writer: &mut dyn std::io::Write,
     ) -> std::io::Result<()> {
-        if self.no_path {
+        if self.header == PathHeader::None {
             writer.write_all(b"<file>\n")
         } else {
-            let resolved = resolve_display(path, self.relative, self.cwd.as_deref());
+            let resolved = resolve_display(path, self.header, self.cwd.as_deref());
             writeln!(writer, "<file path=\"{resolved}\">")
         }
     }
@@ -240,17 +229,12 @@ impl Formatter for AiderFormatter {
     }
 }
 
-pub fn build_formatter(
-    choice: FormatChoice,
-    no_path: bool,
-    relative: bool,
-    aider: bool,
-) -> Box<dyn Formatter> {
+pub fn build_formatter(choice: FormatChoice, header: PathHeader, aider: bool) -> Box<dyn Formatter> {
     if aider {
-        return Box::new(AiderFormatter::new(no_path, relative));
+        return Box::new(AiderFormatter::new(header));
     }
     match choice {
-        FormatChoice::Xml => Box::new(XmlFormatter::new(no_path, relative)),
-        FormatChoice::Markdown => Box::new(MarkdownFormatter::new(no_path, relative)),
+        FormatChoice::Xml => Box::new(XmlFormatter::new(header)),
+        FormatChoice::Markdown => Box::new(MarkdownFormatter::new(header)),
     }
 }

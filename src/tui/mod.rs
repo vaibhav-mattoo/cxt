@@ -11,11 +11,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{
-    collections::HashSet,
-    io, io::Write,
-    path::PathBuf,
-};
+use std::{collections::HashSet, io, io::Write, path::PathBuf};
 
 use app::{AppMode, AppState};
 
@@ -49,7 +45,11 @@ pub(super) fn load_last_selection() -> Option<HashSet<PathBuf>> {
         .filter(|l| !l.is_empty())
         .map(PathBuf::from)
         .collect();
-    if paths.is_empty() { None } else { Some(paths) }
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
 }
 
 pub fn copy_text_to_clipboard(text: &str) -> anyhow::Result<()> {
@@ -96,7 +96,8 @@ fn tui_main(
     no_path: bool,
     aider: bool,
 ) -> Result<TuiOutcome> {
-    let mut app = AppState::new(relative, no_path, aider).context("Failed to read current directory")?;
+    let mut app =
+        AppState::new(relative, no_path, aider).context("Failed to read current directory")?;
     let mut message = String::new();
     let mut needs_redraw = true;
     let mut rendered_height: u16 = 0;
@@ -132,14 +133,19 @@ fn tui_main(
 
         match event::read()? {
             Event::Key(key_event) => {
-                if let Some(paths) =
-                    events::handle_key_event(&mut app, key_event, &mut message)
-                {
+                if let Some(paths) = events::handle_key_event(&mut app, key_event, &mut message) {
                     // Persist non-empty selections for this session so the
                     // user can restore them with `p` in the next invocation.
                     if !app.selected.is_empty() {
                         save_last_selection(&app.selected);
                     }
+                    let path_header = if app.no_path {
+                        crate::cli::PathHeader::None
+                    } else if app.relative {
+                        crate::cli::PathHeader::Relative
+                    } else {
+                        crate::cli::PathHeader::Absolute
+                    };
                     return Ok(TuiOutcome {
                         paths,
                         relative: app.relative,

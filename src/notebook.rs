@@ -9,18 +9,13 @@ pub const MAX_NOTEBOOK_BYTES: u64 = 50 * 1024 * 1024;
 /// separated by `# %%` cell markers. Returns Err if the bytes aren't a
 /// valid notebook (no `cells` or `worksheets` array, invalid JSON, etc.).
 pub fn extract_notebook_code(content: &[u8]) -> Result<String> {
-    let notebook: Value =
-        serde_json::from_slice(content).context("invalid notebook JSON")?;
+    let notebook: Value = serde_json::from_slice(content).context("invalid notebook JSON")?;
 
     // nbformat 4+: top-level `cells`. nbformat 2/3: cells nested under
     // `worksheets[].cells` (possibly several worksheets).
-    let cells: Vec<&Value> = if let Some(arr) =
-        notebook.get("cells").and_then(|v| v.as_array())
-    {
+    let cells: Vec<&Value> = if let Some(arr) = notebook.get("cells").and_then(|v| v.as_array()) {
         arr.iter().collect()
-    } else if let Some(worksheets) =
-        notebook.get("worksheets").and_then(|v| v.as_array())
-    {
+    } else if let Some(worksheets) = notebook.get("worksheets").and_then(|v| v.as_array()) {
         worksheets
             .iter()
             .filter_map(|ws| ws.get("cells").and_then(|c| c.as_array()))
@@ -40,9 +35,7 @@ pub fn extract_notebook_code(content: &[u8]) -> Result<String> {
         let raw = cell.get("source").or_else(|| cell.get("input"));
         let code = match raw {
             Some(Value::String(s)) => s.clone(),
-            Some(Value::Array(arr)) => {
-                arr.iter().filter_map(|v| v.as_str()).collect::<String>()
-            }
+            Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str()).collect::<String>(),
             _ => continue,
         };
         if code.trim().is_empty() {
@@ -123,7 +116,10 @@ mod tests {
     fn test_missing_cells_array() {
         let result = extract_notebook_code(br#"{"metadata": {}}"#);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("'cells' or 'worksheets'"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("'cells' or 'worksheets'"));
     }
 
     #[test]

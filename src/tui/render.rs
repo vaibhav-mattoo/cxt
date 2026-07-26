@@ -17,6 +17,7 @@ use std::{
     path::PathBuf,
 };
 use tui_tree_widget::{Tree, TreeItem};
+
 fn panel(title: &str, focused: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -63,7 +64,6 @@ pub fn draw(
     } else {
         render_file_list(f, app, chunks[1], inner_list_height as usize);
     }
-    let is_git_mode = app.mode == AppMode::GitTree || app.mode == AppMode::GitStatus;
     render_status_bar(
         f, chunks[2], message, file_count, loc_count, app.mode, app.aider,
     );
@@ -266,6 +266,28 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
         f.set_cursor_position(Position::new(cursor_x, inner.y));
     }
 }
+fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
+    let items: Vec<ListItem> = app
+        .git_status_items
+        .iter()
+        .enumerate()
+        .skip(app.git_status_scroll_offset)
+        .take(list_height)
+        .map(|(i, item)| {
+            let is_cursor = i == app.git_status_cursor;
+            let line = build_git_status_line(app, item);
+            let style = if is_cursor {
+                Style::default().bg(theme::CURSOR_BG)
+            } else {
+                Style::default()
+            };
+            ListItem::new(line).style(style)
+        })
+        .collect();
+    let list = List::new(items).block(panel("Git Status", app.mode == AppMode::GitStatus));
+    f.render_widget(list, area);
+}
+
 fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -514,264 +536,7 @@ fn render_file_list(f: &mut Frame, app: &mut AppState, area: Rect, list_height: 
         .highlight_symbol("▎ ");
     f.render_stateful_widget(tree_widget, area, &mut app.tree_state);
 }
-fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height: usize) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(area);
-    let left_area = chunks[0];
-    let right_area = chunks[1];
-    // ── Left panel: status list ──
-    let staged: Vec<(usize, &GitStatusItem)> = app
-        .git_status_items
-        .iter()
-        .enumerate()
-        .filter(|(_, i)| i.section == GitStatusSection::Staged)
-        .collect();
-    let unstaged: Vec<(usize, &GitStatusItem)> = app
-        .git_status_items
-        .iter()
-        .enumerate()
-        .filter(|(_, i)| i.section == GitStatusSection::Unstaged)
-        .collect();
-    let untracked: Vec<(usize, &GitStatusItem)> = app
-        .git_status_items
-        .iter()
-        .enumerate()
-        .filter(|(_, i)| i.section == GitStatusSection::Untracked)
-        .collect();
-    let items_len = app.git_status_items.len();
-    let header_style = Style::default()
-        .fg(theme::MUTED)
-        .add_modifier(Modifier::BOLD);
-    let divider_style = Style::default().fg(theme::BORDER);
-    let mut visual_items: Vec<(Option<usize>, ListItem)> = Vec::new();
-    let push_header = |v: &mut Vec<(Option<usize>, ListItem)>, title: &str, count: usize| {
-        v.push((
-            None,
-            ListItem::new(Line::from(Span::styled(
-                format!(" {title} ({count})"),
-                header_style,
-            ))),
-        ));
-        v.push((
-            None,
-            ListItem::new(Line::from(Span::styled(
-                " ────────────────────────────────────────",
-                divider_style,
-            ))),
-        ));
-    };
-    push_header(&mut visual_items, "Staged Changes", staged.len());
-    if staged.is_empty() {
-        visual_items.push((
-            None,
-            ListItem::new(Line::from(Span::styled(
-                "   (none)",
-                Style::default().fg(theme::MUTED),
-            ))),
-        ));
-    } else {
-        for (idx, item) in &staged {
-            let is_cursor = *idx == app.git_status_cursor;
-            let line = build_git_status_line(app, item);
-            visual_items.push((
-                Some(*idx),
-                ListItem::new(line).style(if is_cursor {
-                    Style::default().bg(theme::CURSOR_BG)
-                } else {
-                    Style::default()
-                }),
-            ));
-        }
-    }
-    push_header(&mut visual_items, "Unstaged Changes", unstaged.len());
-    if unstaged.is_empty() {
-        visual_items.push((
-            None,
-            ListItem::new(Line::from(Span::styled(
-                "   (none)",
-                Style::default().fg(theme::MUTED),
-            ))),
-        ));
-    } else {
-        for (idx, item) in &unstaged {
-            let is_cursor = *idx == app.git_status_cursor;
-            let line = build_git_status_line(app, item);
-            visual_items.push((
-                Some(*idx),
-                ListItem::new(line).style(if is_cursor {
-                    Style::default().bg(theme::CURSOR_BG)
-                } else {
-                    Style::default()
-                }),
-            ));
-        }
-    }
-    push_header(&mut visual_items, "Untracked Files", untracked.len());
-    if untracked.is_empty() {
-        visual_items.push((
-            None,
-            ListItem::new(Line::from(Span::styled(
-                "   (none)",
-                Style::default().fg(theme::MUTED),
-            ))),
-        ));
-    } else {
-        for (idx, item) in &untracked {
-            let is_cursor = *idx == app.git_status_cursor;
-            let line = build_git_status_line(app, item);
-            visual_items.push((
-                Some(*idx),
-                ListItem::new(line).style(if is_cursor {
-                    Style::default().bg(theme::CURSOR_BG)
-                } else {
-                    Style::default()
-                }),
-            ));
-        }
-    }
-    push_header(&mut visual_items, "Stash", app.git_stash_items.len());
-    if app.git_stash_items.is_empty() {
-        visual_items.push((
-            None,
-            ListItem::new(Line::from(Span::styled(
-                "   (none)",
-                Style::default().fg(theme::MUTED),
-            ))),
-        ));
-    } else {
-        for (i, stash) in app.git_stash_items.iter().enumerate() {
-            let idx = items_len + i;
-            let is_cursor = idx == app.git_status_cursor;
-            let line = Line::from(vec![
-                Span::styled(
-                    format!("{} ", stash.stash_ref),
-                    Style::default()
-                        .fg(theme::HASH)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(stash.message.clone(), Style::default().fg(theme::FG)),
-            ]);
-            visual_items.push((
-                Some(idx),
-                ListItem::new(line).style(if is_cursor {
-                    Style::default().bg(theme::CURSOR_BG)
-                } else {
-                    Style::default()
-                }),
-            ));
-        }
-    }
-    push_header(&mut visual_items, "Branches", app.git_branch_items.len());
-    if app.git_branch_items.is_empty() {
-        visual_items.push((
-            None,
-            ListItem::new(Line::from(Span::styled(
-                "   (none)",
-                Style::default().fg(theme::MUTED),
-            ))),
-        ));
-    } else {
-        for (i, branch) in app.git_branch_items.iter().enumerate() {
-            let idx = items_len + app.git_stash_items.len() + i;
-            let is_cursor = idx == app.git_status_cursor;
-            let marker = if branch.is_current { "* " } else { "  " };
-            let name_style = if branch.is_current {
-                Style::default()
-                    .fg(theme::SELECTED)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme::FG)
-            };
-            let line = Line::from(vec![
-                Span::styled(
-                    marker.to_string(),
-                    Style::default()
-                        .fg(theme::SELECTED)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(branch.name.clone(), name_style),
-            ]);
-            visual_items.push((
-                Some(idx),
-                ListItem::new(line).style(if is_cursor {
-                    Style::default().bg(theme::CURSOR_BG)
-                } else {
-                    Style::default()
-                }),
-            ));
-        }
-    }
-    let selected_visual = visual_items
-        .iter()
-        .position(|(idx, _)| *idx == Some(app.git_status_cursor))
-        .unwrap_or(0);
-    let scroll_offset = if selected_visual < app.git_status_scroll_offset {
-        selected_visual
-    } else if selected_visual >= app.git_status_scroll_offset + list_height {
-        selected_visual + 1 - list_height
-    } else {
-        app.git_status_scroll_offset
-    };
-    app.git_status_scroll_offset = scroll_offset;
-    let items: Vec<ListItem> = visual_items
-        .into_iter()
-        .skip(scroll_offset)
-        .take(list_height)
-        .map(|(_, item)| item)
-        .collect();
-    let list = List::new(items).block(panel(
-        if app.pending_stash_pop.is_some() {
-            "Git Status — confirm pop"
-        } else if app.pending_branch_switch.is_some() {
-            "Git Status — confirm switch"
-        } else {
-            "Git Status"
-        },
-        !app.git_status_diff_focused,
-    ));
-    f.render_widget(list, left_area);
-    // ── Right panel: diff ──
-    app.sync_git_status_diff_scroll(list_height);
-    let diff_title = if app.git_status_cursor < items_len {
-        app.git_status_items
-            .get(app.git_status_cursor)
-            .map(|i| i.path.clone())
-            .unwrap_or_else(|| "No changes".to_string())
-    } else {
-        let after_items_idx = app.git_status_cursor - items_len;
-        let stash_len = app.git_stash_items.len();
-        if after_items_idx < stash_len {
-            app.git_stash_items
-                .get(after_items_idx)
-                .map(|s| format!("{} {}", s.stash_ref, s.message))
-                .unwrap_or_else(|| "No stash".to_string())
-        } else {
-            let branch_idx = after_items_idx - stash_len;
-            app.git_branch_items
-                .get(branch_idx)
-                .map(|b| format!("branch: {}", b.name))
-                .unwrap_or_else(|| "No branch".to_string())
-        }
-    };
-    let diff_block = panel(&format!("Diff: {diff_title}"), app.git_status_diff_focused);
-    let diff_inner_width = diff_block.inner(right_area).width;
-    let cursor_line = if app.git_status_diff_focused {
-        Some(app.git_status_diff_cursor)
-    } else {
-        None
-    };
-    let diff_widget = Paragraph::new(build_diff_lines(
-        &app.git_status_diff_content,
-        cursor_line,
-        diff_inner_width,
-    ))
-    .block(diff_block)
-    .scroll((app.git_status_diff_scroll_offset as u16, 0))
-    .wrap(Wrap { trim: false });
-    f.render_widget(diff_widget, right_area);
-}
+
 fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> {
     let abs_path = app.git_file_abs_path(&item.path);
     let is_selected = app.selected.contains(&abs_path);
@@ -1078,7 +843,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("Space", "Select/Unselect"),
         ("1", "Git status mode"),
         ("2", "Git tree mode"),
-        ("Tab", "Switch panel / exit git"),
+        ("Tab", "Toggle git tree"),
         ("s", "Stage/Unstage (Git Status mode)"),
         ("z", "Stash changes (Git Status mode)"),
         ("Enter", "Pop stash / Switch branch"),

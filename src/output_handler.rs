@@ -1,10 +1,83 @@
+use crate::platform;
 use anyhow::Result;
 use std::env;
+use std::io::{self, Write};
 
+use crate::cli::Destination;
 use crate::clipboard::{
     self, ArboardBackend, ClipboardBackend, ClipboardWriter, NamedProcessBackend, WlCopyBackend,
     X11Backend,
 };
+
+struct TeeWriter<'a, A: Write, B: Write> {
+    a: &'a mut A,
+    b: &'a mut B,
+}
+
+impl<A: Write, B: Write> Write for TeeWriter<'_, A, B> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.a.write_all(buf)?;
+        self.b.write_all(buf)?;
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.a.flush()?;
+        self.b.flush()?;
+        Ok(())
+    }
+}
+
+impl Destination {
+    pub fn write_with<R>(&self, f: impl FnOnce(&mut dyn Write) -> Result<R>) -> Result<R> {
+        match self {
+            Destination::Clipboard { echo } => {
+                let mut handler = OutputHandler::new();
+                let mut cw = handler.get_clipboard_writer()?;
+                let result = if *echo {
+                    let stdout = io::stdout();
+                    let mut lock = stdout.lock();
+                    {
+                        let mut tee = TeeWriter {
+                            a: &mut lock,
+                            b: &mut cw,
+                        };
+                        f(&mut tee)?
+                    }
+                } else {
+                    f(&mut cw)?
+                };
+                cw.finish()?;
+                Ok(result)
+            }
+            Destination::File { path, gzip } => {
+                if *gzip {
+                    let file = std::fs::File::create(path)?;
+                    let mut enc =
+                        flate2::write::GzEncoder::new(file, flate2::Compression::default());
+                    let r = f(&mut enc)?;
+                    enc.finish()?;
+                    Ok(r)
+                } else {
+                    let mut file = std::fs::File::create(path)?;
+                    f(&mut file)
+                }
+            }
+            Destination::Stdout => {
+                let stdout = io::stdout();
+                let lock = stdout.lock();
+                let mut buf = io::BufWriter::with_capacity(256 * 1024, lock);
+                let r = f(&mut buf)?;
+                buf.flush()?;
+                Ok(r)
+            }
+            Destination::Discard => f(&mut io::sink()),
+        }
+    }
+
+    pub fn requires_clipboard(&self) -> bool {
+        matches!(self, Destination::Clipboard { .. })
+    }
+}
 
 pub struct OutputHandler {
     backends: Vec<Box<dyn ClipboardBackend>>,
@@ -17,12 +90,15 @@ impl OutputHandler {
         }
     }
 
-    /// Ordered list of backends to try, most preferred first.
     fn build_backend_chain() -> Vec<Box<dyn ClipboardBackend>> {
         let mut chain: Vec<Box<dyn ClipboardBackend>> = Vec::new();
 
         #[cfg(target_os = "macos")]
-        chain.push(Box::new(clipboard::PbcopyBackend));
+        #[cfg(target_os = "macos")]
+        {
+            chain.push(Box::new(clipboard::PbcopyBackend));
+            chain.push(Box::new(ArboardBackend::new()));
+        }
 
         #[cfg(target_os = "windows")]
         chain.push(Box::new(ArboardBackend::new()));
@@ -34,8 +110,9 @@ impl OutputHandler {
             target_os = "netbsd"
         ))]
         {
-            if env::var("WSL_DISTRO_NAME").is_ok() || env::var("WSL_ENV").is_ok() {
+            if platform::is_wsl() {
                 chain.push(Box::new(clipboard::WslBackend));
+                chain.push(Box::new(ArboardBackend::new()));
                 return chain;
             }
 
@@ -45,12 +122,10 @@ impl OutputHandler {
             let wayland_display = env::var("WAYLAND_DISPLAY").unwrap_or_default();
 
             if session_type == "wayland" || !wayland_display.is_empty() {
-                // Wayland: wl-copy → clipboard managers → arboard
                 chain.push(Box::new(WlCopyBackend));
                 push_clipboard_managers(&mut chain);
                 chain.push(Box::new(ArboardBackend::new()));
             } else {
-                // X11 / other: arboard → clipboard managers → wl-copy → xclip
                 chain.push(Box::new(ArboardBackend::new()));
                 push_clipboard_managers(&mut chain);
                 chain.push(Box::new(WlCopyBackend));
@@ -58,7 +133,6 @@ impl OutputHandler {
             }
         }
 
-        // Fallback for unrecognised platforms
         #[cfg(not(any(
             target_os = "linux",
             target_os = "freebsd",
@@ -72,7 +146,6 @@ impl OutputHandler {
         chain
     }
 
-    /// Walk the backend chain and return the first writer that opens successfully.
     pub fn get_clipboard_writer(&mut self) -> Result<ClipboardWriter> {
         for mut backend in self.backends.drain(..) {
             if !backend.is_available() {
@@ -87,6 +160,24 @@ impl OutputHandler {
             "No supported clipboard tool found. \
              Install one of: wl-clipboard, xclip, copyq, clipman, cliphist, \
              gpaste-client, or ensure arboard can connect to a display."
+        ))
+    }
+
+    /// Try each backend in chain order; the first that supports images wins.
+    pub fn copy_image_to_clipboard(&mut self, png_bytes: &[u8]) -> Result<()> {
+        for mut backend in self.backends.drain(..) {
+            if !backend.is_available() {
+                continue;
+            }
+            match backend.write_image(png_bytes) {
+                Ok(()) => return Ok(()),
+                Err(_) => continue,
+            }
+        }
+        Err(anyhow::anyhow!(
+            "No clipboard backend supports images. \
+             Install wl-clipboard or xclip, or ensure arboard can connect \
+             to a display."
         ))
     }
 }

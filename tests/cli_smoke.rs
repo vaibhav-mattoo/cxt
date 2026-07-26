@@ -3,15 +3,13 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::tempdir;
 
-
-
 #[test]
 fn error_on_conflicting_flags() {
     let mut cmd = Command::cargo_bin("cxt").unwrap();
     cmd.args(["--ci", "-r", "--no-path", "."])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("Cannot use --relative and --no-path together"));
+        .stderr(predicates::str::contains("cannot be used with"));
 }
 
 #[test]
@@ -85,9 +83,14 @@ fn writes_content_to_file() {
     fs::write(&input_file, "Test content").unwrap();
 
     let mut cmd = Command::cargo_bin("cxt").unwrap();
-    cmd.args(["--ci", "-w", output_file.to_str().unwrap(), input_file.to_str().unwrap()])
-        .assert()
-        .success();
+    cmd.args([
+        "--ci",
+        "-w",
+        output_file.to_str().unwrap(),
+        input_file.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
 
     let content = fs::read_to_string(&output_file).unwrap();
     assert!(content.contains("Test content"));
