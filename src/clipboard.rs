@@ -243,3 +243,32 @@ impl ClipboardBackend for NamedProcessBackend {
         spawn_process_writer(self.program, self.args)
     }
 }
+
+/// Read text content from the system clipboard.
+/// Tries platform-native clipboard tools first (pbpaste, wl-paste, xclip, xsel),
+/// then falls back to arboard.
+pub fn read_clipboard() -> Result<String, String> {
+    let candidates: &[(&str, &[&str])] = &[
+        ("pbpaste", &[]),
+        ("wl-paste", &[]),
+        ("xclip", &["-selection", "clipboard", "-o"]),
+        ("xsel", &["--clipboard", "--output"]),
+    ];
+
+    for (bin, args) in candidates {
+        if let Ok(out) = Command::new(bin).args(*args).output() {
+            if out.status.success() || !out.stdout.is_empty() {
+                return Ok(String::from_utf8_lossy(&out.stdout).to_string());
+            }
+        }
+    }
+
+    // Fallback: arboard (works on Windows, macOS, and Linux with display)
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        if let Ok(text) = clipboard.get_text() {
+            return Ok(text);
+        }
+    }
+
+    Err("Failed to read clipboard. Install one of: pbpaste, wl-paste, xclip, xsel".to_string())
+}

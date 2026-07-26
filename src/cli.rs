@@ -107,11 +107,27 @@ pub struct Args {
                 (e.g. `cxt --rg PATTERN src/`)"
     )]
     pub rg: Option<String>,
+
+    #[arg(
+        long = "pb",
+        num_args = 0..=1,
+        default_missing_value = "",
+        help = "Read aider SEARCH/REPLACE patch from clipboard and apply it interactively. \
+                Optional value specifies a default file path for hunks without one \
+                (e.g. `cxt --pb src/main.rs`)."
+    )]
+    pub pb: Option<String>,
+
+    #[arg(short = 'd', long = "debug", help = "Enable debug output for --pb patch mode")]
+    pub debug: bool,
 }
 
 impl Args {
     /// Validate that conflicting flags are not used together
     pub fn validate(&self) -> Result<(), String> {
+        if self.pb.is_some() && self.ci {
+            return Err("--pb requires interactive input and is incompatible with --ci".to_string());
+        }
         if self.relative && self.no_path {
             return Err("Cannot use --relative and --no-path together".to_string());
         }

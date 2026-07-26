@@ -10,6 +10,7 @@ mod image_handler;
 mod lang;
 mod notebook;
 mod output_handler;
+mod patch;
 mod token_counter;
 mod tui;
 
@@ -93,12 +94,24 @@ fn main() -> Result<()> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
-    let args = Args::parse_from(wild::args());
+    let mut args = Args::parse_from(wild::args());
 
     if let Err(e) = args.validate() {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
+
+    // --pb: apply aider SEARCH/REPLACE patch from clipboard interactively
+    if let Some(pb_value) = args.pb.take() {
+        let default = if pb_value.is_empty() {
+            None
+        } else {
+            Some(pb_value.as_str())
+        };
+        return crate::patch::run(default, args.debug);
+    }
+
+    // Special case: --lang help prints supported languages and exits.
 
     // Special case: --lang help prints supported languages and exits.
     if args.lang.iter().any(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("help"))) {
@@ -227,7 +240,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let stdin_is_piped = !atty::is(atty::Stream::Stdin);
-    let mut args = args;
     let paths: Vec<String> = if let Some(pattern) = &args.rg {
         // Pipe `git ls-files -z -- <paths>` into `xargs -0 rg -c` so ripgrep
         // only searches git-tracked files in the specified paths.
