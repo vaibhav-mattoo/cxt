@@ -101,6 +101,7 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
 
         let mut current_content = match fs::read_to_string(&target_file) {
             Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => {
                 eprintln!("❌ Failed to read source file {}: {}", target_file, e);
                 continue;
@@ -116,15 +117,45 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
             let search_lines: Vec<&str> = b.search.lines().collect();
             let replace_lines: Vec<&str> = b.replace.lines().collect();
 
-            let (index, similarity) = find_best_match(&original_lines, &search_lines);
-
+            // Handle new file creation or replacing entire empty file content
             if search_lines.is_empty() {
-                eprintln!(
-                    "\n❌ Failed to apply Hunk {}: SEARCH block is empty",
-                    global_hunk_idx
+                if !original_lines.is_empty() {
+                    eprintln!(
+                        "\n❌ Failed to apply Hunk {}: SEARCH block is empty but file is not empty",
+                        global_hunk_idx
+                    );
+                    continue;
+                }
+
+                let new_content = b.replace.clone();
+                let color_code = "New File".green().to_string();
+
+                println!("\n────────────────────────────────────────");
+                println!(
+                    "🧩 Hunk {}/{}  [Match: {}]",
+                    global_hunk_idx, total_hunks, color_code
                 );
+                println!("────────────────────────────────────────");
+
+                show_hunk_diff(&[], &replace_lines);
+
+                print!("\nApply this Hunk? [{}] [Y/n] ", color_code);
+                io::stdout().flush().ok();
+                let mut ans = String::new();
+                io::stdin().read_line(&mut ans).ok();
+                let ans = ans.trim().to_lowercase();
+
+                if ans == "y" || ans.is_empty() {
+                    current_content = new_content;
+                    file_changed = true;
+                    println!("✅ Hunk {} staged", global_hunk_idx);
+                } else {
+                    println!("⏭️  Hunk {} skipped", global_hunk_idx);
+                }
                 continue;
             }
+
+            let (index, similarity) = find_best_match(&original_lines, &search_lines);
 
             if let Some(idx) = index {
                 if similarity >= 0.7 {
