@@ -211,6 +211,7 @@ fn main() -> Result<()> {
     let render = args.render;
 
     let mut tui_header: Option<cli::PathHeader> = None;
+    let mut tui_aider: Option<bool> = None;
 
     let paths: Vec<String> = if let Some(p) = st_paths {
         p
@@ -223,6 +224,7 @@ fn main() -> Result<()> {
         } else {
             Some(cli::PathHeader::Absolute)
         };
+        tui_aider = Some(outcome.aider);
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
@@ -247,6 +249,7 @@ fn main() -> Result<()> {
         } else {
             Some(cli::PathHeader::Absolute)
         };
+        tui_aider = Some(outcome.aider);
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
@@ -274,7 +277,8 @@ fn main() -> Result<()> {
     });
 
     let header = tui_header.unwrap_or_else(|| render.header());
-    let fmt = formatter::build_formatter(render.format, header, render.aider);
+    let aider = tui_aider.unwrap_or(render.aider);
+    let fmt = formatter::build_formatter(render.format, header, aider);
     let mut aggregator = ContentAggregator::new(
         fmt,
         args.select.hidden,
