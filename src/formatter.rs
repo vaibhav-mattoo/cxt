@@ -166,7 +166,67 @@ impl Formatter for MarkdownFormatter {
     }
 }
 
-pub fn build_formatter(choice: FormatChoice, header: PathHeader) -> Box<dyn Formatter> {
+const AIDER_PATCH_BLOCK: &str = r#"<patch method="aider">
+Please apply changes using this aider style format all changed in single code block
+```
+// src/filename1.rs
+[exact original lines (include enough context to be unique, avoid too thin blocks)]
+[modified lines]
+ // src/filename2.rs
+[exact original lines (include enough context to be unique, avoid too thin blocks)]
+[modified lines]
+```
+</patch>
+</context>
+"#;
+
+pub struct AiderFormatter {
+    header: PathHeader,
+    cwd: Option<std::path::PathBuf>,
+}
+
+impl AiderFormatter {
+    pub fn new(header: PathHeader) -> Self {
+        let cwd = if header == PathHeader::Relative {
+            std::env::current_dir().ok()
+        } else {
+            None
+        };
+        Self { header, cwd }
+    }
+}
+
+impl Formatter for AiderFormatter {
+    fn document_start(&self) -> &'static str {
+        "<context>\n"
+    }
+
+    fn document_end(&self) -> &'static str {
+        AIDER_PATCH_BLOCK
+    }
+
+    fn write_file_header(
+        &self,
+        path: &Path,
+        writer: &mut dyn std::io::Write,
+    ) -> std::io::Result<()> {
+        if self.header == PathHeader::None {
+            writer.write_all(b"<file>\n")
+        } else {
+            let resolved = resolve_display(path, self.header, self.cwd.as_deref());
+            writeln!(writer, "<file path=\"{resolved}\">")
+        }
+    }
+
+    fn file_footer(&self) -> &'static str {
+        "\n</file>\n"
+    }
+}
+
+pub fn build_formatter(choice: FormatChoice, header: PathHeader, aider: bool) -> Box<dyn Formatter> {
+    if aider {
+        return Box::new(AiderFormatter::new(header));
+    }
     match choice {
         FormatChoice::Xml => Box::new(XmlFormatter::new(header)),
         FormatChoice::Markdown => Box::new(MarkdownFormatter::new(header)),

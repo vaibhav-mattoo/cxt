@@ -73,6 +73,11 @@ impl Args {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.source.pb.is_some() && self.output.ci {
+            return Err(
+                "--pb requires interactive input and is incompatible with --ci".to_string(),
+            );
+        }
         for ignore_path in &self.select.ignore {
             if crate::content_aggregator::is_glob_pattern(ignore_path) {
                 if let Err(e) = globset::Glob::new(ignore_path) {
@@ -131,6 +136,32 @@ pub struct SourceArgs {
         conflicts_with = "df",
     )]
     pub st: Option<u8>,
+
+    #[arg(
+        long = "rg",
+        value_name = "PATTERN",
+        help = "Run ripgrep to find git-tracked files matching PATTERN, print match counts, \
+                and aggregate them. Optionally restrict search to provided paths \
+                (e.g. `cxt --rg PATTERN src/`)"
+    )]
+    pub rg: Option<String>,
+
+    #[arg(
+        long = "pb",
+        num_args = 0..=1,
+        default_missing_value = "",
+        help = "Read aider SEARCH/REPLACE patch from clipboard and apply it interactively. \
+                Optional value specifies a default file path for hunks without one \
+                (e.g. `cxt --pb src/main.rs`)."
+    )]
+    pub pb: Option<String>,
+
+    #[arg(
+        short = 'd',
+        long = "debug",
+        help = "Enable debug output for --pb patch mode"
+    )]
+    pub debug: bool,
 }
 
 #[derive(ClapArgs)]
@@ -187,6 +218,13 @@ pub struct RenderArgs {
 
     #[arg(short, long, help = "Disable file path headers")]
     pub no_path: bool,
+
+    #[arg(
+        long,
+        help = "Append aider-style SEARCH/REPLACE patch instructions to the output \
+                (overrides --format)"
+    )]
+    pub aider: bool,
 
     #[arg(
         long,

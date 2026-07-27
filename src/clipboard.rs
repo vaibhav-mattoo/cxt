@@ -127,6 +127,92 @@ fn command_available(program: &str) -> bool {
 
 // ── Backends ─────────────────────────────────────────────────────────────────
 
+pub fn read_clipboard() -> Result<String> {
+    // macOS: pbpaste
+    #[cfg(target_os = "macos")]
+    {
+        if command_available("pbpaste") {
+            if let Ok(output) = Command::new("pbpaste").output() {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                }
+            }
+        }
+    }
+
+    // Linux / *BSD family
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        // WSL — try first since it's the most specific environment
+        if std::env::var("WSL_DISTRO_NAME").is_ok() || std::env::var("WSL_ENV").is_ok() {
+            if let Ok(output) = Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-Clipboard -Raw",
+                ])
+                .output()
+            {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                }
+            }
+        }
+
+        // Wayland
+        let session_type = std::env::var("XDG_SESSION_TYPE")
+            .unwrap_or_default()
+            .to_lowercase();
+        let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap_or_default();
+        if (session_type == "wayland" || !wayland_display.is_empty())
+            && command_available("wl-paste")
+        {
+            if let Ok(output) = Command::new("wl-paste").output() {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                }
+            }
+        }
+
+        // X11
+        if !std::env::var("DISPLAY").unwrap_or_default().is_empty() {
+            if command_available("xclip") {
+                if let Ok(output) = Command::new("xclip")
+                    .args(["-selection", "clipboard", "-o"])
+                    .output()
+                {
+                    if output.status.success() {
+                        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                    }
+                }
+            }
+            if command_available("xsel") {
+                if let Ok(output) = Command::new("xsel")
+                    .args(["--clipboard", "--output"])
+                    .output()
+                {
+                    if output.status.success() {
+                        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                    }
+                }
+            }
+        }
+    }
+
+    // Windows / fallback: arboard
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| anyhow::anyhow!("Failed to open clipboard: {e}"))?;
+    clipboard
+        .get_text()
+        .map_err(|e| anyhow::anyhow!("arboard get_text failed: {e}"))
+}
+
 pub struct WlCopyBackend;
 impl ClipboardBackend for WlCopyBackend {
     fn is_available(&self) -> bool {

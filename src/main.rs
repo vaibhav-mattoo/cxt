@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use std::io::Write;
 
 mod cli;
 mod clipboard;
@@ -9,6 +10,8 @@ mod image_handler;
 mod lang;
 mod notebook;
 mod output_handler;
+mod patch;
+mod platform;
 mod token_counter;
 mod tui;
 
@@ -93,11 +96,21 @@ fn main() -> Result<()> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
-    let args = Args::parse_from(wild::args());
+    let mut args = Args::parse_from(wild::args());
 
     if let Err(e) = args.validate() {
         eprintln!("Error: {e}");
         std::process::exit(1);
+    }
+
+    // --pb: apply aider SEARCH/REPLACE patch from clipboard interactively
+    if let Some(pb_value) = args.source.pb.take() {
+        let default = if pb_value.is_empty() {
+            None
+        } else {
+            Some(pb_value.as_str())
+        };
+        return crate::patch::run(default, args.source.debug);
     }
 
     match args.mode() {
@@ -198,12 +211,20 @@ fn main() -> Result<()> {
     let render = args.render;
 
     let mut tui_header: Option<cli::PathHeader> = None;
+    let mut tui_aider: Option<bool> = None;
 
     let paths: Vec<String> = if let Some(p) = st_paths {
         p
     } else if args.source.tui {
-        let outcome = tui::run_tui(render.relative, render.no_path)?;
-        tui_header = Some(outcome.path_header);
+        let outcome = tui::run_tui(render.relative, render.no_path, render.aider)?;
+        tui_header = if outcome.no_path {
+            Some(cli::PathHeader::None)
+        } else if outcome.relative {
+            Some(cli::PathHeader::Relative)
+        } else {
+            Some(cli::PathHeader::Absolute)
+        };
+        tui_aider = Some(outcome.aider);
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
@@ -220,8 +241,15 @@ fn main() -> Result<()> {
         }
         combined
     } else if args.paths.is_empty() {
-        let outcome = tui::run_tui(render.relative, render.no_path)?;
-        tui_header = Some(outcome.path_header);
+        let outcome = tui::run_tui(render.relative, render.no_path, render.aider)?;
+        tui_header = if outcome.no_path {
+            Some(cli::PathHeader::None)
+        } else if outcome.relative {
+            Some(cli::PathHeader::Relative)
+        } else {
+            Some(cli::PathHeader::Absolute)
+        };
+        tui_aider = Some(outcome.aider);
         if outcome.paths.is_empty() {
             println!("No files or directories selected. Exiting.");
             return Ok(());
@@ -249,7 +277,8 @@ fn main() -> Result<()> {
     });
 
     let header = tui_header.unwrap_or_else(|| render.header());
-    let fmt = formatter::build_formatter(render.format, header);
+    let aider = tui_aider.unwrap_or(render.aider);
+    let fmt = formatter::build_formatter(render.format, header, aider);
     let mut aggregator = ContentAggregator::new(
         fmt,
         args.select.hidden,

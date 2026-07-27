@@ -502,7 +502,7 @@ mod tests {
             PathHeader::Absolute
         };
         ContentAggregator::new(
-            build_formatter(FormatChoice::Xml, header),
+            build_formatter(FormatChoice::Xml, no_path, false, false),
             false,
             vec![],
             true,
