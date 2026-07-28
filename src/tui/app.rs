@@ -534,6 +534,45 @@ impl AppState {
         }
     }
 
+    /// Toggle selection of all files changed in the last commit (HEAD).
+    /// Uses `git diff-tree --no-commit-id --name-only -r HEAD` to get the list.
+    /// If all last-commit files are already selected, it deselects them.
+    pub fn toggle_select_last_commit_files(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
+            .current_dir(&self.root_dir)
+            .output();
+
+        let commit_files: std::collections::HashSet<PathBuf> = match output {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .map(|p| self.root_dir.join(p))
+                    .collect()
+            }
+            _ => std::collections::HashSet::new(),
+        };
+
+        if commit_files.is_empty() {
+            return;
+        }
+
+        let all_selected = commit_files.iter().all(|p| self.selected.contains(p));
+
+        self.invalidate_caches();
+        if all_selected {
+            for p in &commit_files {
+                self.selected.remove(p);
+            }
+        } else {
+            for p in &commit_files {
+                self.selected.insert(p.clone());
+            }
+        }
+    }
+
     pub fn selected_file_count(&mut self) -> usize {
         if let Some(cached) = self.selected_file_count_cache {
             return cached;

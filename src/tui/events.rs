@@ -715,6 +715,9 @@ fn handle_normal(
         KeyCode::Char('t') => {
             app.toggle_select_tracked();
         }
+        KeyCode::Char('T') => {
+            app.toggle_select_last_commit_files();
+        }
        KeyCode::Tab | KeyCode::Char('2') => {
             app.enter_git_tree_mode();
         }

@@ -1091,6 +1091,7 @@ fn build_help_lines() -> Vec<Line<'static>> {
         ("m", "Toggle aider patch"),
         ("p", "Restore last selection"),
         ("t", "Toggle select tracked files"),
+        ("T", "Toggle select last commit files"),
         ("q/Ctrl-c", "Quit"),
         ("r", "Toggle relative path"),
         ("n", "Toggle no path headers"),
