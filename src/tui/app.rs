@@ -495,6 +495,45 @@ impl AppState {
         self.selected.len() - before
     }
 
+    /// Toggle selection of all git-tracked files in the current view.
+    /// Uses `git ls-files` to get the exact list of tracked files.
+    /// If all tracked files are already selected, it deselects them.
+    pub fn toggle_select_tracked(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["ls-files", "-z"])
+            .current_dir(&self.root_dir)
+            .output();
+
+        let tracked_files: std::collections::HashSet<PathBuf> = match output {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout)
+                    .split('\0')
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .map(|p| self.root_dir.join(p))
+                    .collect()
+            }
+            _ => std::collections::HashSet::new(),
+        };
+
+        if tracked_files.is_empty() {
+            return;
+        }
+
+        let all_selected = tracked_files.iter().all(|p| self.selected.contains(p));
+
+        self.invalidate_caches();
+        if all_selected {
+            for p in &tracked_files {
+                self.selected.remove(p);
+            }
+        } else {
+            for p in &tracked_files {
+                self.selected.insert(p.clone());
+            }
+        }
+    }
+
     pub fn selected_file_count(&mut self) -> usize {
         if let Some(cached) = self.selected_file_count_cache {
             return cached;

@@ -173,6 +173,56 @@ fn main() -> Result<()> {
         Mode::Aggregate => {}
     }
 
+    // --ls: aggregate all git-tracked files via `git ls-files`
+    if args.source.ls {
+        let output = std::process::Command::new("git")
+            .args(["ls-files", "-z"])
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git ls-files failed: {stderr}");
+        }
+        let paths: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+
+        if paths.is_empty() {
+            println!("No tracked files found.");
+            return Ok(());
+        }
+
+        let allowed_extensions = args.select.extensions().unwrap_or_else(|e| {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        });
+
+        let header = args.render.header();
+        let aider = args.render.aider;
+        let fmt = formatter::build_formatter(args.render.format, header, aider);
+        let mut aggregator = ContentAggregator::new(
+            fmt,
+            args.select.hidden,
+            expand_braces(args.select.ignore.clone()),
+            !args.select.no_sort,
+            allowed_extensions,
+        );
+
+        let dest = destination_from_args(&args);
+
+        if dest.requires_clipboard() {
+            for p in &paths {
+                println!("  {p}");
+            }
+        }
+
+        dest.write_with(|w| aggregator.aggregate_paths(&paths, w))?;
+        print_binary_skip_warning(&aggregator);
+        print_aggregate_summary(&aggregator, &dest);
+        return Ok(());
+    }
+
     // --st: resolve git-changed files, then fall through to aggregate.
     let st_paths: Option<Vec<String>> = if let Some(n) = args.source.st {
         let output = if n == 0 {

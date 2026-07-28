@@ -712,6 +712,9 @@ fn handle_normal(
                 "No previous selection in this session.".to_string()
             };
         }
+        KeyCode::Char('t') => {
+            app.toggle_select_tracked();
+        }
        KeyCode::Tab | KeyCode::Char('2') => {
             app.enter_git_tree_mode();
         }

@@ -138,6 +138,12 @@ pub struct SourceArgs {
     pub st: Option<u8>,
 
     #[arg(
+        long = "ls",
+        help = "Aggregate all git-tracked files (git ls-files)"
+    )]
+    pub ls: bool,
+
+    #[arg(
         long = "rg",
         value_name = "PATTERN",
         help = "Run ripgrep to find git-tracked files matching PATTERN, print match counts, \
