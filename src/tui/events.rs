@@ -14,6 +14,21 @@ pub fn handle_key_event(
     if key_event.kind != KeyEventKind::Press {
         return None;
     }
+
+    // Global help overlay: any key closes it if open
+    if app.show_help {
+        app.show_help = false;
+        return None;
+    }
+
+    // Toggle help on '?' unless actively typing in an input field
+    if key_event.code == KeyCode::Char('?') {
+        if !matches!(app.mode, AppMode::SearchFocused | AppMode::RgFocused) {
+            app.show_help = true;
+            return None;
+        }
+    }
+
     match app.mode {
         AppMode::SearchFocused => handle_search_focused(app, key_event),
         AppMode::SearchNavigating => handle_search_navigating(app, key_event, message),
@@ -621,15 +636,6 @@ fn handle_normal(
     key_event: KeyEvent,
     message: &mut String,
 ) -> Option<Vec<String>> {
-    if app.show_help {
-        match key_event.code {
-            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
-                app.show_help = false;
-            }
-            _ => {}
-        }
-        return None;
-    }
     match key_event.code {
         KeyCode::Char('q') => return Some(vec![]),
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
