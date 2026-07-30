@@ -47,25 +47,28 @@ pub fn draw(
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(1), // Global mode bar
+            Constraint::Length(3), // Path / Search bar
+            Constraint::Min(1),    // File list / Git panels
+            Constraint::Length(1), // Status bar
         ])
         .split(f.area());
-    let inner_list_height = chunks[1].height.saturating_sub(2);
-    app.list_area = Some(chunks[1]);
-    render_path_bar(f, app, chunks[0]);
+    let inner_list_height = chunks[2].height.saturating_sub(2);
+    app.list_area = Some(chunks[2]);
+
+    render_mode_bar(f, app, chunks[0]);
+    render_path_bar(f, app, chunks[1]);
     if app.mode == AppMode::GitTree {
-        render_git_tree(f, app, chunks[1], inner_list_height as usize);
+        render_git_tree(f, app, chunks[2], inner_list_height as usize);
     } else if app.mode == AppMode::GitStatus {
-        render_git_status(f, app, chunks[1], inner_list_height as usize);
+        render_git_status(f, app, chunks[2], inner_list_height as usize);
     } else if app.mode == AppMode::RgFocused || app.mode == AppMode::RgNavigating {
-        render_rg(f, app, chunks[1], inner_list_height as usize);
+        render_rg(f, app, chunks[2], inner_list_height as usize);
     } else {
-        render_file_list(f, app, chunks[1], inner_list_height as usize);
+        render_file_list(f, app, chunks[2], inner_list_height as usize);
     }
     render_status_bar(
-        f, chunks[2], message, file_count, loc_count, app.mode, app.aider,
+        f, chunks[3], message, file_count, loc_count, app.mode, app.aider,
     );
     if app.show_help {
         render_help_overlay(f, f.area());
@@ -175,6 +178,43 @@ fn render_branch_switch_overlay(f: &mut Frame, area: Rect, branch: &str) {
     ];
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
 }
+fn render_mode_bar(f: &mut Frame, app: &AppState, area: Rect) {
+    let is_dirlist = matches!(
+        app.mode,
+        AppMode::Normal
+            | AppMode::SearchFocused
+            | AppMode::SearchNavigating
+            | AppMode::RgFocused
+            | AppMode::RgNavigating
+    );
+    let is_git_status = app.mode == AppMode::GitStatus;
+    let is_git_tree = app.mode == AppMode::GitTree;
+
+    let active_style = Style::default()
+        .fg(theme::SELECTED)
+        .add_modifier(Modifier::BOLD);
+    let inactive_style = Style::default().fg(theme::MUTED);
+    let bracket_style = Style::default().fg(theme::BORDER);
+    let key_style = Style::default()
+        .fg(theme::FG)
+        .add_modifier(Modifier::BOLD);
+
+    let line = Line::from(vec![
+        Span::styled("[", bracket_style),
+        Span::styled("DirList", if is_dirlist { active_style } else { inactive_style }),
+        Span::styled("]  ", bracket_style),
+        Span::styled("[", bracket_style),
+        Span::styled("1 ", key_style),
+        Span::styled("GitStatus", if is_git_status { active_style } else { inactive_style }),
+        Span::styled("]  ", bracket_style),
+        Span::styled("[", bracket_style),
+        Span::styled("2 ", key_style),
+        Span::styled("GitCommit", if is_git_tree { active_style } else { inactive_style }),
+        Span::styled("]", bracket_style),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
+}
+
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
     let (path, title_str, path_style) =
         if app.mode == AppMode::RgFocused || app.mode == AppMode::RgNavigating {
@@ -234,10 +274,11 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
             };
             (path, title_str, Style::default())
         };
-    let block = panel(
-        &title_str,
-        app.mode != AppMode::Normal && app.mode != AppMode::GitStatus,
+    let is_focused = matches!(
+        app.mode,
+        AppMode::SearchFocused | AppMode::RgFocused
     );
+    let block = panel(&title_str, is_focused);
     let inner = block.inner(area);
     let path_widget = Paragraph::new(path)
         .block(block)
