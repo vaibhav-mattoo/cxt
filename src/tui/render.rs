@@ -71,7 +71,7 @@ pub fn draw(
         f, chunks[3], message, file_count, loc_count, app.mode, app.aider,
     );
     if app.show_help {
-        render_help_overlay(f, f.area());
+        render_help_overlay(f, f.area(), app.mode);
     }
     if let Some(stash_ref) = app.pending_stash_pop.clone() {
         let stash_message = app
@@ -1065,10 +1065,17 @@ fn render_status_bar(
     )]);
     f.render_widget(Paragraph::new(hint), chunks[1]);
 }
-fn render_help_overlay(f: &mut Frame, area: Rect) {
+fn render_help_overlay(f: &mut Frame, area: Rect, mode: AppMode) {
     let modal = centered_rect(60, 85, area);
     f.render_widget(Clear, modal);
-    let block = panel("Keybindings", true);
+
+    let title = match mode {
+        AppMode::GitStatus => "Keybindings — Git Status",
+        AppMode::GitTree => "Keybindings — Git Commit",
+        _ => "Keybindings — DirList",
+    };
+
+    let block = panel(title, true);
     let inner = block.inner(modal);
     f.render_widget(block, modal);
     // Reserve the last inner row for the close hint.
@@ -1081,7 +1088,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
         height: inner.height.min(1),
         ..inner
     };
-    let help_lines = build_help_lines();
+    let help_lines = build_help_lines(&mode);
     f.render_widget(Paragraph::new(help_lines), content_area);
     let close_hint = Line::from(vec![Span::styled(
         "? / Esc  close ",
@@ -1109,36 +1116,63 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vertical[1])[1]
 }
 /// One keybinding per line, key padded to the width of the longest key.
-fn build_help_lines() -> Vec<Line<'static>> {
-    const ALL: &[(&str, &str)] = &[
-        ("↑/k", "Move up"),
-        ("↓/j", "Move down"),
-        ("←/h", "Collapse dir"),
-        ("→/l", "Expand dir"),
-        ("Enter", "Toggle expand"),
-        ("Backspace", "Parent dir"),
-        ("Space", "Select/Unselect"),
-        ("1", "Git status mode"),
-        ("2", "Git tree mode"),
-        ("Tab", "Switch panel / exit git"),
-        ("s", "Stage/Unstage (Git Status mode)"),
-        ("z", "Stash changes (Git Status mode)"),
-        ("Enter", "Pop stash / Switch branch"),
-        ("d", "Toggle diff (Git mode)"),
-        ("/ or Ctrl-f", "Search files"),
-        ("'", "rg search file contents"),
-        ("?", "Toggle help"),
-        ("c", "Confirm selection"),
-        ("m", "Toggle aider patch"),
-        ("p", "Restore last selection"),
-        ("t", "Toggle select tracked files"),
-        ("T", "Toggle select last commit files"),
-        ("q/Ctrl-c", "Quit"),
-        ("r", "Toggle relative path"),
-        ("n", "Toggle no path headers"),
-    ];
-    let key_width = ALL.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-    ALL.iter()
+fn build_help_lines(mode: &AppMode) -> Vec<Line<'static>> {
+    let all: &[(&str, &str)] = match mode {
+        AppMode::GitStatus => &[
+            ("↑/k", "Move up"),
+            ("↓/j", "Move down"),
+            ("Tab", "Switch panel (list/diff)"),
+            ("Space", "Select file"),
+            ("s", "Stage/Unstage file"),
+            ("z", "Stash changes"),
+            ("Enter", "Pop stash / Switch branch"),
+            ("c", "Copy selected files"),
+            ("m", "Toggle aider patch"),
+            ("1/Esc", "Back to DirList"),
+            ("2", "Switch to Git Commit"),
+            ("?", "Toggle help"),
+            ("q/Ctrl-c", "Quit"),
+        ],
+        AppMode::GitTree => &[
+            ("↑/k", "Move up"),
+            ("↓/j", "Move down"),
+            ("Tab", "Switch panel (commits/files)"),
+            ("Space", "Mark commit (union select files)"),
+            ("d", "Toggle diff view"),
+            ("c", "Copy selected files"),
+            ("m", "Toggle aider patch"),
+            ("p", "Restore last selection"),
+            ("1", "Switch to Git Status"),
+            ("2/Esc", "Back to DirList"),
+            ("?", "Toggle help"),
+            ("q/Ctrl-c", "Quit"),
+        ],
+        _ => &[
+            ("↑/k", "Move up"),
+            ("↓/j", "Move down"),
+            ("←/h", "Collapse dir"),
+            ("→/l", "Expand dir"),
+            ("Enter", "Toggle expand"),
+            ("Backspace", "Parent dir"),
+            ("Space", "Select/Unselect"),
+            ("/ or Ctrl-f", "Search files"),
+            ("'", "rg search file contents"),
+            ("c", "Confirm selection"),
+            ("m", "Toggle aider patch"),
+            ("p", "Restore last selection"),
+            ("t", "Toggle select tracked files"),
+            ("T", "Toggle select last commit files"),
+            ("r", "Toggle relative path"),
+            ("n", "Toggle no path headers"),
+            ("1", "Git status mode"),
+            ("2", "Git tree mode"),
+            ("?", "Toggle help"),
+            ("q/Ctrl-c", "Quit"),
+        ],
+    };
+
+    let key_width = all.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    all.iter()
         .map(|(key, desc)| {
             Line::from(vec![
                 Span::styled(
