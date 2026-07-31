@@ -1071,9 +1071,9 @@ fn render_status_bar(
 ) {
     let hint_str = match mode {
         AppMode::GitStatus => {
-            "space select   s stage   z stash   l/L cycle   PgUp/PgDn page   [/] page diff   Tab switch   c copy   m aider   ? help   q quit "
+            "space select   s stage   z stash   l/L cycle  c copy   m aider   ? help   q quit "
         }
-        AppMode::GitTree => "space select   d diff   PgUp/PgDn page   [/] page diff   c copy   m aider   ? help   q quit ",
+        AppMode::GitTree => "space select   d diff   c copy   m aider   ? help   q quit ",
         AppMode::RgFocused | AppMode::RgNavigating => {
             "' edit   Tab switch panel   y copy result   space select   c copy files   m aider   ? help   q quit "
         }
