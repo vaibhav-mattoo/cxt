@@ -103,14 +103,13 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // --pb: apply aider SEARCH/REPLACE patch from clipboard interactively
+    // --pb: apply an aider SEARCH/REPLACE patch interactively.
+    //   `--pb`                  → read patch from the clipboard
+    //   `--pb <existing file>`  → read patch from that file (e.g. `--pb foo.patch`)
+    //   `--pb <other string>`   → read from clipboard and use the string as the
+    //                             default target file for hunks lacking one
     if let Some(pb_value) = args.source.pb.take() {
-        let default = if pb_value.is_empty() {
-            None
-        } else {
-            Some(pb_value.as_str())
-        };
-        return crate::patch::run(default, args.source.debug);
+        return crate::patch::run(&pb_value, args.source.debug);
     }
 
     match args.mode() {

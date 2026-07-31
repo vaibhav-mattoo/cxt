@@ -156,9 +156,12 @@ pub struct SourceArgs {
         long = "pb",
         num_args = 0..=1,
         default_missing_value = "",
-        help = "Read aider SEARCH/REPLACE patch from clipboard and apply it interactively. \
-                Optional value specifies a default file path for hunks without one \
-                (e.g. `cxt --pb src/main.rs`)."
+        help = "Read an aider SEARCH/REPLACE patch and apply it interactively. \
+                With no value, reads from the clipboard. If the value is an \
+                existing file path, reads the patch from that file (e.g. \
+                `cxt --pb changes.patch`). Otherwise reads from the clipboard \
+                and uses the value as the default target file for hunks \
+                without one (e.g. `cxt --pb src/main.rs`)."
     )]
     pub pb: Option<String>,
 
