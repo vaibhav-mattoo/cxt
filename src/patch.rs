@@ -146,7 +146,7 @@ pub fn run(pb_value: &str, debug_mode: bool) -> Result<()> {
                 continue;
             }
         };
-
+        let had_trailing_newline = current_content.ends_with('\n');
         let mut file_changed = false;
 
         for b in file_blocks {
@@ -263,6 +263,9 @@ pub fn run(pb_value: &str, debug_mode: bool) -> Result<()> {
         }
 
         if file_changed {
+            if had_trailing_newline && !current_content.ends_with('\n') {
+                current_content.push('\n');
+            }
             match fs::write(&target_file, &current_content) {
                 Ok(_) => println!("\n💾 Wrote all approved Hunks to {}", target_file),
                 Err(e) => eprintln!("\n❌ Failed to write file {}: {}", target_file, e),
