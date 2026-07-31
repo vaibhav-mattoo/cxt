@@ -87,8 +87,34 @@ fn handle_git_status(
         KeyCode::Left | KeyCode::Char('h') => {
             app.git_status_diff_focused = false;
         }
-        KeyCode::Right | KeyCode::Char('l') => {
+        KeyCode::Right => {
             app.git_status_diff_focused = true;
+        }
+        KeyCode::Char('l') => {
+            app.cycle_git_status_section(true);
+        }
+        KeyCode::Char('L') => {
+            app.cycle_git_status_section(false);
+        }
+        // PgDn/PgUp: standard scroll — only pages the diff when it's the
+        // focused buffer.
+        KeyCode::PageDown => {
+            if app.git_status_diff_focused {
+                app.page_git_status_diff(true);
+            }
+        }
+        KeyCode::PageUp => {
+            if app.git_status_diff_focused {
+                app.page_git_status_diff(false);
+            }
+        }
+        // ]/[: remote scroll — always pages the right-hand diff buffer,
+        // even while the left status list still has focus.
+        KeyCode::Char(']') => {
+            app.page_git_status_diff(true);
+        }
+        KeyCode::Char('[') => {
+            app.page_git_status_diff(false);
         }
         KeyCode::Char('1') | KeyCode::Esc => {
             app.mode = AppMode::Normal;
@@ -120,7 +146,9 @@ fn handle_git_status(
                             .args(["restore", "--staged", path])
                             .output();
                     }
-                    GitStatusSection::Unstaged | GitStatusSection::Untracked => {
+                    GitStatusSection::Unstaged
+                    | GitStatusSection::Untracked
+                    | GitStatusSection::LastCommit => {
                         let _ = std::process::Command::new("git")
                             .args(["add", path])
                             .output();
@@ -252,6 +280,30 @@ fn handle_git_tree(
                 app.fetch_git_diff();
                 app.git_diff_scroll_offset = 0;
                 app.git_diff_cursor = 0;
+            }
+        }
+        // PgDn/PgUp: standard scroll — only pages the diff when it's the
+        // focused (right-hand) panel.
+        KeyCode::PageDown => {
+            if app.show_git_diff && !app.git_panel_focused {
+                app.page_git_diff(true);
+            }
+        }
+        KeyCode::PageUp => {
+            if app.show_git_diff && !app.git_panel_focused {
+                app.page_git_diff(false);
+            }
+        }
+        // ]/[: remote scroll — always pages the right-hand diff buffer,
+        // even while the commits panel still has focus.
+        KeyCode::Char(']') => {
+            if app.show_git_diff {
+                app.page_git_diff(true);
+            }
+        }
+        KeyCode::Char('[') => {
+            if app.show_git_diff {
+                app.page_git_diff(false);
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {

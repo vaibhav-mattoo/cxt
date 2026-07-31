@@ -17,11 +17,12 @@ pub enum AppMode {
     RgNavigating,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GitStatusSection {
     Staged,
     Unstaged,
     Untracked,
+    LastCommit,
 }
 
 #[derive(Clone)]
@@ -505,14 +506,12 @@ impl AppState {
             .output();
 
         let tracked_files: std::collections::HashSet<PathBuf> = match output {
-            Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout)
-                    .split('\0')
-                    .filter(|s| !s.is_empty())
-                    .map(PathBuf::from)
-                    .map(|p| self.root_dir.join(p))
-                    .collect()
-            }
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .split('\0')
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .map(|p| self.root_dir.join(p))
+                .collect(),
             _ => std::collections::HashSet::new(),
         };
 
@@ -544,14 +543,12 @@ impl AppState {
             .output();
 
         let commit_files: std::collections::HashSet<PathBuf> = match output {
-            Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .filter(|s| !s.is_empty())
-                    .map(PathBuf::from)
-                    .map(|p| self.root_dir.join(p))
-                    .collect()
-            }
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .map(|p| self.root_dir.join(p))
+                .collect(),
             _ => std::collections::HashSet::new(),
         };
 
@@ -722,6 +719,24 @@ impl AppState {
                                 section: GitStatusSection::Unstaged,
                             });
                         }
+                    }
+                }
+            }
+        }
+
+        // Fetch files changed in the last commit (HEAD)
+        if let Ok(lc_output) = std::process::Command::new("git")
+            .args(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
+            .output()
+        {
+            if lc_output.status.success() {
+                let lc_stdout = String::from_utf8_lossy(&lc_output.stdout);
+                for line in lc_stdout.lines() {
+                    if !line.is_empty() {
+                        items.push(GitStatusItem {
+                            path: line.to_string(),
+                            section: GitStatusSection::LastCommit,
+                        });
                     }
                 }
             }
@@ -923,6 +938,26 @@ impl AppState {
             GitStatusSection::Unstaged => std::process::Command::new("git")
                 .args(["diff", "--", &item.path])
                 .output(),
+            GitStatusSection::LastCommit => {
+                let output = std::process::Command::new("git")
+                    .args(["show", "--no-color", "--format=", "HEAD", "--", &item.path])
+                    .output();
+                self.git_status_diff_content = match output {
+                    Ok(o) if o.status.success() => {
+                        let text = String::from_utf8_lossy(&o.stdout).to_string();
+                        if text.is_empty() {
+                            "(no textual diff in last commit)".to_string()
+                        } else {
+                            text
+                        }
+                    }
+                    Ok(o) => format!("Error: {}", String::from_utf8_lossy(&o.stderr).trim()),
+                    Err(e) => format!("Failed to run git show: {e}"),
+                };
+                self.git_status_diff_scroll_offset = 0;
+                self.git_status_diff_cursor = 0;
+                return;
+            }
             GitStatusSection::Untracked => {
                 let abs_path = self.git_file_abs_path(&item.path);
                 match std::fs::read_to_string(&abs_path) {
@@ -957,9 +992,14 @@ impl AppState {
     }
 
     /// Keep the diff cursor within the viewport, scrolling when it leaves.
-    pub fn sync_git_status_diff_scroll(&mut self, visible_height: usize) {
+    ///
+    /// See `sync_git_diff_scroll` for why `width` (the rendered panel's
+    /// inner width) matters: wrapped long lines occupy multiple rows, and
+    /// the scroll offset operates in wrapped-row space.
+    pub fn sync_git_status_diff_scroll(&mut self, visible_height: usize, width: u16) {
         self.visible_height = visible_height;
-        let len = self.git_status_diff_content.lines().count();
+        let lines: Vec<&str> = self.git_status_diff_content.lines().collect();
+        let len = lines.len();
         if len == 0 {
             self.git_status_diff_cursor = 0;
             self.git_status_diff_scroll_offset = 0;
@@ -968,19 +1008,101 @@ impl AppState {
         if self.git_status_diff_cursor >= len {
             self.git_status_diff_cursor = len - 1;
         }
-        if len <= visible_height {
+        let mut row_start = 0usize;
+        let mut cursor_row_start = 0usize;
+        let mut cursor_row_len = 1usize;
+        let mut total_rows = 0usize;
+        for (i, line) in lines.iter().enumerate() {
+            let rows = visual_row_count(line, width);
+            if i == self.git_status_diff_cursor {
+                cursor_row_start = row_start;
+                cursor_row_len = rows;
+            }
+            row_start += rows;
+            total_rows += rows;
+        }
+        if total_rows <= visible_height {
             self.git_status_diff_scroll_offset = 0;
             return;
         }
-        if self.git_status_diff_cursor < self.git_status_diff_scroll_offset {
-            self.git_status_diff_scroll_offset = self.git_status_diff_cursor;
-        } else if self.git_status_diff_cursor >= self.git_status_diff_scroll_offset + visible_height
-        {
-            self.git_status_diff_scroll_offset = self.git_status_diff_cursor + 1 - visible_height;
+        let cursor_row_end = cursor_row_start + cursor_row_len;
+        if cursor_row_start < self.git_status_diff_scroll_offset {
+            self.git_status_diff_scroll_offset = cursor_row_start;
+        } else if cursor_row_end > self.git_status_diff_scroll_offset + visible_height {
+            self.git_status_diff_scroll_offset = cursor_row_end - visible_height;
         }
         self.git_status_diff_scroll_offset = self
             .git_status_diff_scroll_offset
-            .min(len.saturating_sub(visible_height));
+            .min(total_rows.saturating_sub(visible_height));
+    }
+
+    /// Scroll the git status diff by one page.
+    pub fn page_git_status_diff(&mut self, down: bool) {
+        let len = self.git_status_diff_content.lines().count();
+        let page = self.visible_height.saturating_sub(1).max(1);
+        if down {
+            self.git_status_diff_cursor =
+                (self.git_status_diff_cursor + page).min(len.saturating_sub(1));
+        } else {
+            self.git_status_diff_cursor = self.git_status_diff_cursor.saturating_sub(page);
+        }
+    }
+
+    /// Cycle the cursor to the start of the next/previous section.
+    /// Section order: Staged → Unstaged → Untracked → LastCommit → Stash → Branches.
+    pub fn cycle_git_status_section(&mut self, forward: bool) {
+        let items_len = self.git_status_items.len();
+        let stash_len = self.git_stash_items.len();
+
+        let mut section_starts: Vec<usize> = Vec::new();
+        for section in [
+            GitStatusSection::Staged,
+            GitStatusSection::Unstaged,
+            GitStatusSection::Untracked,
+            GitStatusSection::LastCommit,
+        ] {
+            if let Some(idx) = self
+                .git_status_items
+                .iter()
+                .position(|i| i.section == section)
+            {
+                section_starts.push(idx);
+            }
+        }
+        if stash_len > 0 {
+            section_starts.push(items_len);
+        }
+        if !self.git_branch_items.is_empty() {
+            section_starts.push(items_len + stash_len);
+        }
+
+        section_starts.sort_unstable();
+        section_starts.dedup();
+
+        if section_starts.is_empty() {
+            return;
+        }
+
+        let current = self.git_status_cursor;
+        let target = if forward {
+            section_starts
+                .iter()
+                .find(|&&s| s > current)
+                .copied()
+                .or(section_starts.first().copied())
+        } else {
+            section_starts
+                .iter()
+                .rev()
+                .find(|&&s| s < current)
+                .copied()
+                .or(section_starts.last().copied())
+        };
+
+        if let Some(idx) = target {
+            self.git_status_cursor = idx;
+            self.fetch_git_status_diff();
+        }
     }
     pub fn fetch_git_diff(&mut self) {
         let hash = self
@@ -1066,8 +1188,17 @@ impl AppState {
     }
     /// Move the diff cursor within the loaded diff content, scrolling the
     /// viewport only when the cursor would leave it (mirrors sync_git_scroll).
-    pub fn sync_git_diff_scroll(&mut self, visible_height: usize) {
-        let len = self.git_diff_content.lines().count();
+    ///
+    /// `width` is the rendered panel's inner width. Because the diff
+    /// `Paragraph` wraps long lines (`Wrap { trim: false }`), a single
+    /// source line can occupy more than one on-screen row, and the scroll
+    /// offset actually operates in wrapped-row space. Ignoring that (as a
+    /// naive raw-line-count calculation would) can leave the cursor's line
+    /// scrolled out of view even though the math "looks" satisfied.
+    pub fn sync_git_diff_scroll(&mut self, visible_height: usize, width: u16) {
+        self.visible_height = visible_height;
+        let lines: Vec<&str> = self.git_diff_content.lines().collect();
+        let len = lines.len();
         if len == 0 {
             self.git_diff_cursor = 0;
             self.git_diff_scroll_offset = 0;
@@ -1076,20 +1207,46 @@ impl AppState {
         if self.git_diff_cursor >= len {
             self.git_diff_cursor = len - 1;
         }
-        if len <= visible_height {
+        let mut row_start = 0usize;
+        let mut cursor_row_start = 0usize;
+        let mut cursor_row_len = 1usize;
+        let mut total_rows = 0usize;
+        for (i, line) in lines.iter().enumerate() {
+            let rows = visual_row_count(line, width);
+            if i == self.git_diff_cursor {
+                cursor_row_start = row_start;
+                cursor_row_len = rows;
+            }
+            row_start += rows;
+            total_rows += rows;
+        }
+        if total_rows <= visible_height {
             self.git_diff_scroll_offset = 0;
             return;
         }
-        if self.git_diff_cursor < self.git_diff_scroll_offset {
-            self.git_diff_scroll_offset = self.git_diff_cursor;
-        } else if self.git_diff_cursor >= self.git_diff_scroll_offset + visible_height {
-            self.git_diff_scroll_offset = self.git_diff_cursor + 1 - visible_height;
+        let cursor_row_end = cursor_row_start + cursor_row_len;
+        if cursor_row_start < self.git_diff_scroll_offset {
+            self.git_diff_scroll_offset = cursor_row_start;
+        } else if cursor_row_end > self.git_diff_scroll_offset + visible_height {
+            self.git_diff_scroll_offset = cursor_row_end - visible_height;
         }
         self.git_diff_scroll_offset = self
             .git_diff_scroll_offset
-            .min(len.saturating_sub(visible_height));
+            .min(total_rows.saturating_sub(visible_height));
+    }
+
+    /// Scroll the git commit diff by one page.
+    pub fn page_git_diff(&mut self, down: bool) {
+        let len = self.git_diff_content.lines().count();
+        let page = self.visible_height.saturating_sub(1).max(1);
+        if down {
+            self.git_diff_cursor = (self.git_diff_cursor + page).min(len.saturating_sub(1));
+        } else {
+            self.git_diff_cursor = self.git_diff_cursor.saturating_sub(page);
+        }
     }
     pub fn sync_git_scroll(&mut self, visible_height: usize) {
+        self.visible_height = visible_height;
         if self.git_panel_focused {
             let len = self.git_commits.len();
             if self.git_commit_cursor >= len {
@@ -1315,6 +1472,19 @@ impl AppState {
     }
 }
 
+/// Number of rows a single (unwrapped) line of `text` occupies when rendered
+/// in a `Paragraph` with `Wrap { trim: false }` at the given panel width.
+/// This is a char-count approximation of ratatui's wrapping, which is close
+/// enough to keep the cursor row inside the synced scroll window.
+fn visual_row_count(text: &str, width: u16) -> usize {
+    let width = width.max(1) as usize;
+    let len = text.chars().count();
+    if len == 0 {
+        1
+    } else {
+        len.div_ceil(width)
+    }
+}
 /// Returns all files under `dir` using the same walker settings as path collection.
 pub fn files_under(dir: &Path, respect_gitignore: bool) -> Vec<PathBuf> {
     ignore::WalkBuilder::new(dir)
