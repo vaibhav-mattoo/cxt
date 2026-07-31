@@ -1245,6 +1245,26 @@ impl AppState {
             self.git_diff_cursor = self.git_diff_cursor.saturating_sub(page);
         }
     }
+    /// Scroll the commit list by one page (used by PageUp/PageDown when the
+    /// commits panel is focused).
+    pub fn page_git_commits(&mut self, down: bool) {
+        let len = self.git_commits.len();
+        if len == 0 {
+            return;
+        }
+        let page = self.visible_height.saturating_sub(1).max(1);
+        if down {
+            self.git_commit_cursor = (self.git_commit_cursor + page).min(len - 1);
+        } else {
+            self.git_commit_cursor = self.git_commit_cursor.saturating_sub(page);
+        }
+        self.fetch_git_files();
+        if self.show_git_diff {
+            self.fetch_git_diff();
+            self.git_diff_scroll_offset = 0;
+            self.git_diff_cursor = 0;
+        }
+    }
     pub fn sync_git_scroll(&mut self, visible_height: usize) {
         self.visible_height = visible_height;
         if self.git_panel_focused {

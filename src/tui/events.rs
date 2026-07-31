@@ -282,15 +282,19 @@ fn handle_git_tree(
                 app.git_diff_cursor = 0;
             }
         }
-        // PgDn/PgUp: standard scroll — only pages the diff when it's the
-        // focused (right-hand) panel.
+        // PgDn/PgUp: standard scroll — pages whichever panel is focused
+        // (commits list, or the diff when it's open and focused).
         KeyCode::PageDown => {
-            if app.show_git_diff && !app.git_panel_focused {
+            if app.git_panel_focused {
+                app.page_git_commits(true);
+            } else if app.show_git_diff {
                 app.page_git_diff(true);
             }
         }
         KeyCode::PageUp => {
-            if app.show_git_diff && !app.git_panel_focused {
+            if app.git_panel_focused {
+                app.page_git_commits(false);
+            } else if app.show_git_diff {
                 app.page_git_diff(false);
             }
         }

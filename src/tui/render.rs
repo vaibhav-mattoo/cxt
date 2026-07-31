@@ -1071,9 +1071,9 @@ fn render_status_bar(
 ) {
     let hint_str = match mode {
         AppMode::GitStatus => {
-            "space select   s stage   z stash   l/L cycle   PgDn/]/[ scroll   Tab switch   c copy   m aider   ? help   q quit "
+            "space select   s stage   z stash   l/L cycle   PgUp/PgDn page   [/] page diff   Tab switch   c copy   m aider   ? help   q quit "
         }
-        AppMode::GitTree => "space select   d diff   PgDn/]/[ scroll   c copy   m aider   ? help   q quit ",
+        AppMode::GitTree => "space select   d diff   PgUp/PgDn page   [/] page diff   c copy   m aider   ? help   q quit ",
         AppMode::RgFocused | AppMode::RgNavigating => {
             "' edit   Tab switch panel   y copy result   space select   c copy files   m aider   ? help   q quit "
         }
@@ -1179,8 +1179,8 @@ fn build_help_lines(mode: &AppMode) -> Vec<Line<'static>> {
             ("z", "Stash changes"),
             ("Enter", "Pop stash / Switch branch"),
             ("l/L", "Cycle section forward/back"),
-            ("PgDn/PgUp", "Scroll diff by page"),
-            ("]/[", "Scroll diff by page"),
+            ("PgDn/PgUp", "Page focused panel (list/diff)"),
+            ("]/[", "Page diff (any panel focused)"),
             ("c", "Copy selected files"),
             ("m", "Toggle aider patch"),
             ("1/Esc", "Back to DirList"),
@@ -1194,8 +1194,8 @@ fn build_help_lines(mode: &AppMode) -> Vec<Line<'static>> {
             ("Tab", "Switch panel (commits/files)"),
             ("Space", "Mark commit (union select files)"),
             ("d", "Toggle diff view"),
-            ("PgDn/PgUp", "Scroll diff by page"),
-            ("]/[", "Scroll diff by page"),
+            ("PgDn/PgUp", "Page focused panel (commits/diff)"),
+            ("]/[", "Page diff (any panel focused)"),
             ("c", "Copy selected files"),
             ("m", "Toggle aider patch"),
             ("p", "Restore last selection"),
