@@ -47,28 +47,31 @@ pub fn draw(
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(1), // Global mode bar
+            Constraint::Length(3), // Path / Search bar
+            Constraint::Min(1),    // File list / Git panels
+            Constraint::Length(1), // Status bar
         ])
         .split(f.area());
-    let inner_list_height = chunks[1].height.saturating_sub(2);
-    app.list_area = Some(chunks[1]);
-    render_path_bar(f, app, chunks[0]);
+    let inner_list_height = chunks[2].height.saturating_sub(2);
+    app.list_area = Some(chunks[2]);
+
+    render_mode_bar(f, app, chunks[0]);
+    render_path_bar(f, app, chunks[1]);
     if app.mode == AppMode::GitTree {
-        render_git_tree(f, app, chunks[1], inner_list_height as usize);
+        render_git_tree(f, app, chunks[2], inner_list_height as usize);
     } else if app.mode == AppMode::GitStatus {
-        render_git_status(f, app, chunks[1], inner_list_height as usize);
+        render_git_status(f, app, chunks[2], inner_list_height as usize);
     } else if app.mode == AppMode::RgFocused || app.mode == AppMode::RgNavigating {
-        render_rg(f, app, chunks[1], inner_list_height as usize);
+        render_rg(f, app, chunks[2], inner_list_height as usize);
     } else {
-        render_file_list(f, app, chunks[1], inner_list_height as usize);
+        render_file_list(f, app, chunks[2], inner_list_height as usize);
     }
     render_status_bar(
-        f, chunks[2], message, file_count, loc_count, app.mode, app.aider,
+        f, chunks[3], message, file_count, loc_count, app.mode, app.aider,
     );
     if app.show_help {
-        render_help_overlay(f, f.area());
+        render_help_overlay(f, f.area(), app.mode);
     }
     if let Some(stash_ref) = app.pending_stash_pop.clone() {
         let stash_message = app
@@ -175,6 +178,62 @@ fn render_branch_switch_overlay(f: &mut Frame, area: Rect, branch: &str) {
     ];
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
 }
+fn render_mode_bar(f: &mut Frame, app: &AppState, area: Rect) {
+    let is_dirlist = matches!(
+        app.mode,
+        AppMode::Normal
+            | AppMode::SearchFocused
+            | AppMode::SearchNavigating
+            | AppMode::RgFocused
+            | AppMode::RgNavigating
+    );
+    let is_git_status = app.mode == AppMode::GitStatus;
+    let is_git_tree = app.mode == AppMode::GitTree;
+
+    let active_style = Style::default()
+        .fg(theme::SELECTED)
+        .add_modifier(Modifier::BOLD);
+    let inactive_style = Style::default().fg(theme::MUTED);
+    let bracket_style = Style::default().fg(theme::BORDER);
+    let key_style = Style::default().fg(theme::FG).add_modifier(Modifier::BOLD);
+
+    let line = Line::from(vec![
+        Span::styled("[", bracket_style),
+        Span::styled(
+            "DirList",
+            if is_dirlist {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::styled("]  ", bracket_style),
+        Span::styled("[", bracket_style),
+        Span::styled("1 ", key_style),
+        Span::styled(
+            "GitStatus",
+            if is_git_status {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::styled("]  ", bracket_style),
+        Span::styled("[", bracket_style),
+        Span::styled("2 ", key_style),
+        Span::styled(
+            "GitCommit",
+            if is_git_tree {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::styled("]", bracket_style),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
+}
+
 fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
     let (path, title_str, path_style) =
         if app.mode == AppMode::RgFocused || app.mode == AppMode::RgNavigating {
@@ -234,10 +293,8 @@ fn render_path_bar(f: &mut Frame, app: &AppState, area: Rect) {
             };
             (path, title_str, Style::default())
         };
-    let block = panel(
-        &title_str,
-        app.mode != AppMode::Normal && app.mode != AppMode::GitStatus,
-    );
+    let is_focused = matches!(app.mode, AppMode::SearchFocused | AppMode::RgFocused);
+    let block = panel(&title_str, is_focused);
     let inner = block.inner(area);
     let path_widget = Paragraph::new(path)
         .block(block)
@@ -330,19 +387,22 @@ fn render_git_tree(f: &mut Frame, app: &mut AppState, area: Rect, list_height: u
     let commit_list = List::new(commit_items).block(panel("Commits", app.git_panel_focused));
     f.render_widget(commit_list, chunks[0]);
     if app.show_git_diff {
-        app.sync_git_diff_scroll(list_height);
         let diff_title = app
             .git_files
             .get(app.git_files_cursor)
             .cloned()
             .unwrap_or_default();
-        let cursor_line = if app.git_panel_focused {
-            None
-        } else {
-            Some(app.git_diff_cursor)
-        };
         let diff_block = panel(&format!("Diff: {diff_title}"), !app.git_panel_focused);
         let diff_inner_width = diff_block.inner(chunks[1]).width;
+        app.sync_git_diff_scroll(list_height, diff_inner_width);
+        // ]/[/PgUp/PgDn move the diff cursor regardless of which panel has
+        // focus, so keep the highlight visible once it's left position 0
+        // even if the commits panel is still focused.
+        let cursor_line = if !app.git_panel_focused || app.git_diff_cursor > 0 {
+            Some(app.git_diff_cursor)
+        } else {
+            None
+        };
         let diff_widget = Paragraph::new(build_diff_lines(
             &app.git_diff_content,
             cursor_line,
@@ -541,6 +601,12 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
         .enumerate()
         .filter(|(_, i)| i.section == GitStatusSection::Untracked)
         .collect();
+    let last_commit: Vec<(usize, &GitStatusItem)> = app
+        .git_status_items
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.section == GitStatusSection::LastCommit)
+        .collect();
     let items_len = app.git_status_items.len();
     let header_style = Style::default()
         .fg(theme::MUTED)
@@ -620,6 +686,29 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
         ));
     } else {
         for (idx, item) in &untracked {
+            let is_cursor = *idx == app.git_status_cursor;
+            let line = build_git_status_line(app, item);
+            visual_items.push((
+                Some(*idx),
+                ListItem::new(line).style(if is_cursor {
+                    Style::default().bg(theme::CURSOR_BG)
+                } else {
+                    Style::default()
+                }),
+            ));
+        }
+    }
+    push_header(&mut visual_items, "Last Commit", last_commit.len());
+    if last_commit.is_empty() {
+        visual_items.push((
+            None,
+            ListItem::new(Line::from(Span::styled(
+                "   (none)",
+                Style::default().fg(theme::MUTED),
+            ))),
+        ));
+    } else {
+        for (idx, item) in &last_commit {
             let is_cursor = *idx == app.git_status_cursor;
             let line = build_git_status_line(app, item);
             visual_items.push((
@@ -734,7 +823,6 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
     ));
     f.render_widget(list, left_area);
     // ── Right panel: diff ──
-    app.sync_git_status_diff_scroll(list_height);
     let diff_title = if app.git_status_cursor < items_len {
         app.git_status_items
             .get(app.git_status_cursor)
@@ -758,7 +846,11 @@ fn render_git_status(f: &mut Frame, app: &mut AppState, area: Rect, list_height:
     };
     let diff_block = panel(&format!("Diff: {diff_title}"), app.git_status_diff_focused);
     let diff_inner_width = diff_block.inner(right_area).width;
-    let cursor_line = if app.git_status_diff_focused {
+    app.sync_git_status_diff_scroll(list_height, diff_inner_width);
+    // ]/[/PgUp/PgDn move the diff cursor regardless of which panel has
+    // focus, so keep the highlight visible once it's left position 0 even
+    // if the status list is still focused.
+    let cursor_line = if app.git_status_diff_focused || app.git_status_diff_cursor > 0 {
         Some(app.git_status_diff_cursor)
     } else {
         None
@@ -781,6 +873,7 @@ fn build_git_status_line(app: &AppState, item: &GitStatusItem) -> Line<'static> 
         GitStatusSection::Staged => ("M ", Color::Green),
         GitStatusSection::Unstaged => ("M ", Color::Yellow),
         GitStatusSection::Untracked => ("? ", Color::Red),
+        GitStatusSection::LastCommit => ("C ", Color::Cyan),
     };
     Line::from(vec![
         Span::styled(
@@ -978,7 +1071,7 @@ fn render_status_bar(
 ) {
     let hint_str = match mode {
         AppMode::GitStatus => {
-            "space select   s stage   z stash   Tab switch   c copy   m aider   ? help   q quit "
+            "space select   s stage   z stash   l/L cycle  c copy   m aider   ? help   q quit "
         }
         AppMode::GitTree => "space select   d diff   c copy   m aider   ? help   q quit ",
         AppMode::RgFocused | AppMode::RgNavigating => {
@@ -1024,10 +1117,17 @@ fn render_status_bar(
     )]);
     f.render_widget(Paragraph::new(hint), chunks[1]);
 }
-fn render_help_overlay(f: &mut Frame, area: Rect) {
+fn render_help_overlay(f: &mut Frame, area: Rect, mode: AppMode) {
     let modal = centered_rect(60, 85, area);
     f.render_widget(Clear, modal);
-    let block = panel("Keybindings", true);
+
+    let title = match mode {
+        AppMode::GitStatus => "Keybindings — Git Status",
+        AppMode::GitTree => "Keybindings — Git Commit",
+        _ => "Keybindings — DirList",
+    };
+
+    let block = panel(title, true);
     let inner = block.inner(modal);
     f.render_widget(block, modal);
     // Reserve the last inner row for the close hint.
@@ -1040,7 +1140,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
         height: inner.height.min(1),
         ..inner
     };
-    let help_lines = build_help_lines();
+    let help_lines = build_help_lines(&mode);
     f.render_widget(Paragraph::new(help_lines), content_area);
     let close_hint = Line::from(vec![Span::styled(
         "? / Esc  close ",
@@ -1068,34 +1168,68 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vertical[1])[1]
 }
 /// One keybinding per line, key padded to the width of the longest key.
-fn build_help_lines() -> Vec<Line<'static>> {
-    const ALL: &[(&str, &str)] = &[
-        ("↑/k", "Move up"),
-        ("↓/j", "Move down"),
-        ("←/h", "Collapse dir"),
-        ("→/l", "Expand dir"),
-        ("Enter", "Toggle expand"),
-        ("Backspace", "Parent dir"),
-        ("Space", "Select/Unselect"),
-        ("1", "Git status mode"),
-        ("2", "Git tree mode"),
-        ("Tab", "Switch panel / exit git"),
-        ("s", "Stage/Unstage (Git Status mode)"),
-        ("z", "Stash changes (Git Status mode)"),
-        ("Enter", "Pop stash / Switch branch"),
-        ("d", "Toggle diff (Git mode)"),
-        ("/ or Ctrl-f", "Search files"),
-        ("'", "rg search file contents"),
-        ("?", "Toggle help"),
-        ("c", "Confirm selection"),
-        ("m", "Toggle aider patch"),
-        ("p", "Restore last selection"),
-        ("q/Ctrl-c", "Quit"),
-        ("r", "Toggle relative path"),
-        ("n", "Toggle no path headers"),
-    ];
-    let key_width = ALL.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-    ALL.iter()
+fn build_help_lines(mode: &AppMode) -> Vec<Line<'static>> {
+    let all: &[(&str, &str)] = match mode {
+        AppMode::GitStatus => &[
+            ("↑/k", "Move up"),
+            ("↓/j", "Move down"),
+            ("Tab", "Switch panel (list/diff)"),
+            ("Space", "Select file"),
+            ("s", "Stage/Unstage file"),
+            ("z", "Stash changes"),
+            ("Enter", "Pop stash / Switch branch"),
+            ("l/L", "Cycle section forward/back"),
+            ("PgDn/PgUp", "Page focused panel (list/diff)"),
+            ("]/[", "Page diff (any panel focused)"),
+            ("c", "Copy selected files"),
+            ("m", "Toggle aider patch"),
+            ("1/Esc", "Back to DirList"),
+            ("2", "Switch to Git Commit"),
+            ("?", "Toggle help"),
+            ("q/Ctrl-c", "Quit"),
+        ],
+        AppMode::GitTree => &[
+            ("↑/k", "Move up"),
+            ("↓/j", "Move down"),
+            ("Tab", "Switch panel (commits/files)"),
+            ("Space", "Mark commit (union select files)"),
+            ("d", "Toggle diff view"),
+            ("PgDn/PgUp", "Page focused panel (commits/diff)"),
+            ("]/[", "Page diff (any panel focused)"),
+            ("c", "Copy selected files"),
+            ("m", "Toggle aider patch"),
+            ("p", "Restore last selection"),
+            ("1", "Switch to Git Status"),
+            ("2/Esc", "Back to DirList"),
+            ("?", "Toggle help"),
+            ("q/Ctrl-c", "Quit"),
+        ],
+        _ => &[
+            ("↑/k", "Move up"),
+            ("↓/j", "Move down"),
+            ("←/h", "Collapse dir"),
+            ("→/l", "Expand dir"),
+            ("Enter", "Toggle expand"),
+            ("Backspace", "Parent dir"),
+            ("Space", "Select/Unselect"),
+            ("/ or Ctrl-f", "Search files"),
+            ("'", "rg search file contents"),
+            ("c", "Confirm selection"),
+            ("m", "Toggle aider patch"),
+            ("p", "Restore last selection"),
+            ("t", "Toggle select tracked files"),
+            ("T", "Toggle select last commit files"),
+            ("r", "Toggle relative path"),
+            ("n", "Toggle no path headers"),
+            ("1", "Git status mode"),
+            ("2", "Git tree mode"),
+            ("?", "Toggle help"),
+            ("q/Ctrl-c", "Quit"),
+        ],
+    };
+
+    let key_width = all.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    all.iter()
         .map(|(key, desc)| {
             Line::from(vec![
                 Span::styled(

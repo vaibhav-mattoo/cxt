@@ -110,9 +110,11 @@ fn tui_main(
                     AppMode::GitTree => {
                         app.sync_git_scroll(app.visible_height);
                     }
-                    AppMode::GitStatus => {
-                        app.sync_git_status_diff_scroll(app.visible_height);
-                    }
+                    // The diff pane's sync depends on its actual rendered
+                    // width (for wrap-aware scrolling), which is only known
+                    // once render::draw computes the panel layout — it
+                    // calls sync_git_status_diff_scroll itself.
+                    AppMode::GitStatus => {}
                     AppMode::RgFocused | AppMode::RgNavigating => {
                         app.sync_rg_scroll(app.visible_height);
                     }

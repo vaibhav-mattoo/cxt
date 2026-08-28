@@ -14,6 +14,21 @@ pub fn handle_key_event(
     if key_event.kind != KeyEventKind::Press {
         return None;
     }
+
+    // Global help overlay: any key closes it if open
+    if app.show_help {
+        app.show_help = false;
+        return None;
+    }
+
+    // Toggle help on '?' unless actively typing in an input field
+    if key_event.code == KeyCode::Char('?') {
+        if !matches!(app.mode, AppMode::SearchFocused | AppMode::RgFocused) {
+            app.show_help = true;
+            return None;
+        }
+    }
+
     match app.mode {
         AppMode::SearchFocused => handle_search_focused(app, key_event),
         AppMode::SearchNavigating => handle_search_navigating(app, key_event, message),
@@ -72,8 +87,34 @@ fn handle_git_status(
         KeyCode::Left | KeyCode::Char('h') => {
             app.git_status_diff_focused = false;
         }
-        KeyCode::Right | KeyCode::Char('l') => {
+        KeyCode::Right => {
             app.git_status_diff_focused = true;
+        }
+        KeyCode::Char('l') => {
+            app.cycle_git_status_section(true);
+        }
+        KeyCode::Char('L') => {
+            app.cycle_git_status_section(false);
+        }
+        // PgDn/PgUp: standard scroll — only pages the diff when it's the
+        // focused buffer.
+        KeyCode::PageDown => {
+            if app.git_status_diff_focused {
+                app.page_git_status_diff(true);
+            }
+        }
+        KeyCode::PageUp => {
+            if app.git_status_diff_focused {
+                app.page_git_status_diff(false);
+            }
+        }
+        // ]/[: remote scroll — always pages the right-hand diff buffer,
+        // even while the left status list still has focus.
+        KeyCode::Char(']') => {
+            app.page_git_status_diff(true);
+        }
+        KeyCode::Char('[') => {
+            app.page_git_status_diff(false);
         }
         KeyCode::Char('1') | KeyCode::Esc => {
             app.mode = AppMode::Normal;
@@ -105,7 +146,9 @@ fn handle_git_status(
                             .args(["restore", "--staged", path])
                             .output();
                     }
-                    GitStatusSection::Unstaged | GitStatusSection::Untracked => {
+                    GitStatusSection::Unstaged
+                    | GitStatusSection::Untracked
+                    | GitStatusSection::LastCommit => {
                         let _ = std::process::Command::new("git")
                             .args(["add", path])
                             .output();
@@ -237,6 +280,34 @@ fn handle_git_tree(
                 app.fetch_git_diff();
                 app.git_diff_scroll_offset = 0;
                 app.git_diff_cursor = 0;
+            }
+        }
+        // PgDn/PgUp: standard scroll — pages whichever panel is focused
+        // (commits list, or the diff when it's open and focused).
+        KeyCode::PageDown => {
+            if app.git_panel_focused {
+                app.page_git_commits(true);
+            } else if app.show_git_diff {
+                app.page_git_diff(true);
+            }
+        }
+        KeyCode::PageUp => {
+            if app.git_panel_focused {
+                app.page_git_commits(false);
+            } else if app.show_git_diff {
+                app.page_git_diff(false);
+            }
+        }
+        // ]/[: remote scroll — always pages the right-hand diff buffer,
+        // even while the commits panel still has focus.
+        KeyCode::Char(']') => {
+            if app.show_git_diff {
+                app.page_git_diff(true);
+            }
+        }
+        KeyCode::Char('[') => {
+            if app.show_git_diff {
+                app.page_git_diff(false);
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
@@ -621,15 +692,6 @@ fn handle_normal(
     key_event: KeyEvent,
     message: &mut String,
 ) -> Option<Vec<String>> {
-    if app.show_help {
-        match key_event.code {
-            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
-                app.show_help = false;
-            }
-            _ => {}
-        }
-        return None;
-    }
     match key_event.code {
         KeyCode::Char('q') => return Some(vec![]),
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -711,6 +773,12 @@ fn handle_normal(
             } else {
                 "No previous selection in this session.".to_string()
             };
+        }
+        KeyCode::Char('t') => {
+            app.toggle_select_tracked();
+        }
+        KeyCode::Char('T') => {
+            app.toggle_select_last_commit_files();
         }
        KeyCode::Tab | KeyCode::Char('2') => {
             app.enter_git_tree_mode();

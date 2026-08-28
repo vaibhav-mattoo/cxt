@@ -11,13 +11,53 @@ struct Block {
     replace: String,
 }
 
-/// Read an aider-style SEARCH/REPLACE patch from the clipboard, sanitise LLM
-/// output noise, parse the blocks, then interactively apply each hunk with a
-/// fuzzy-match confirmation prompt.
-pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
-    println!("📋 Reading and cleaning content from clipboard...");
-    let clipboard = crate::clipboard::read_clipboard().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let patch_content = sanitize_llm_output(&clipboard, debug_mode);
+/// Normalise a line for fuzzy matching by stripping comments and whitespace.
+/// Returns an empty string if the line is empty or a comment.
+fn normalize_for_match(line: &str) -> String {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Common comment styles
+    if trimmed.starts_with("//")
+        || trimmed.starts_with("#")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with("*")
+        || trimmed.starts_with("--")
+        || trimmed.starts_with("<!--")
+        || trimmed.starts_with(";;;")
+    {
+        return String::new();
+    }
+    trimmed.to_string()
+}
+
+/// Read an aider-style SEARCH/REPLACE patch and interactively apply each hunk
+/// with a fuzzy-match confirmation prompt.
+///
+/// `pb_value` resolution:
+/// - empty string: read patch from the clipboard (no default file)
+/// - path to an existing file: read patch from that file (no default file)
+/// - any other string: read patch from the clipboard and use the string as
+///   the default target file for hunks that lack an explicit path
+pub fn run(pb_value: &str, debug_mode: bool) -> Result<()> {
+    let (patch_content, default_file): (String, Option<&str>) = if pb_value.is_empty() {
+        println!("📋 Reading and cleaning content from clipboard...");
+        let clipboard =
+            crate::clipboard::read_clipboard().map_err(|e| anyhow::anyhow!("{e}"))?;
+        (sanitize_llm_output(&clipboard, debug_mode), None)
+    } else if std::path::Path::new(pb_value).is_file() {
+        println!("📋 Reading patch from file: {}", pb_value);
+        let file_content = std::fs::read_to_string(pb_value).map_err(|e| {
+            anyhow::anyhow!("Failed to read patch file '{}': {e}", pb_value)
+        })?;
+        (sanitize_llm_output(&file_content, debug_mode), None)
+    } else {
+        println!("📋 Reading and cleaning content from clipboard...");
+        let clipboard =
+            crate::clipboard::read_clipboard().map_err(|e| anyhow::anyhow!("{e}"))?;
+        (sanitize_llm_output(&clipboard, debug_mode), Some(pb_value))
+    };
 
     if !patch_content
         .lines()
@@ -106,7 +146,7 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
                 continue;
             }
         };
-
+        let had_trailing_newline = current_content.ends_with('\n');
         let mut file_changed = false;
 
         for b in file_blocks {
@@ -138,7 +178,13 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
 
                 show_hunk_diff(&[], &replace_lines);
 
-                print!("\nApply this Hunk? [{}] [Y/n] ", color_code);
+                print!(
+                    "\nApply this Hunk? {}  Hunks [{}/{}]  [{}] [Y/n] ",
+                    target_file.green(),
+                    global_hunk_idx,
+                    total_hunks,
+                    color_code
+                );
                 io::stdout().flush().ok();
                 let mut ans = String::new();
                 io::stdin().read_line(&mut ans).ok();
@@ -156,10 +202,10 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
 
             let (index, similarity) = find_best_match(&original_lines, &search_lines);
 
-            if let Some(idx) = index {
+            if let Some((start, end)) = index {
                 if similarity >= 0.7 {
                     let mut new_lines = original_lines.clone();
-                    new_lines.splice(idx..idx + search_lines.len(), replace_lines.iter().cloned());
+                    new_lines.splice(start..end, replace_lines.iter().cloned());
                     let new_content = new_lines.join("\n");
 
                     let match_percent = (similarity * 100.0).round() as i32;
@@ -182,7 +228,13 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
 
                     show_hunk_diff(&search_lines, &replace_lines);
 
-                    print!("\nApply this Hunk? [{}] [Y/n] ", color_code);
+                    print!(
+                        "\nApply this Hunk? {}  Hunks [{}/{}]  [{}] [Y/n] ",
+                        target_file.green(),
+                        global_hunk_idx,
+                        total_hunks,
+                        color_code
+                    );
                     io::stdout().flush().ok();
                     let mut ans = String::new();
                     io::stdin().read_line(&mut ans).ok();
@@ -211,6 +263,9 @@ pub fn run(default_file: Option<&str>, debug_mode: bool) -> Result<()> {
         }
 
         if file_changed {
+            if had_trailing_newline && !current_content.ends_with('\n') {
+                current_content.push('\n');
+            }
             match fs::write(&target_file, &current_content) {
                 Ok(_) => println!("\n💾 Wrote all approved Hunks to {}", target_file),
                 Err(e) => eprintln!("\n❌ Failed to write file {}: {}", target_file, e),
@@ -332,20 +387,42 @@ fn parse_search_replace(diff_content: &str) -> Vec<Block> {
 
 /// Sliding-window fuzzy match: finds the position in `original_lines` whose
 /// content best matches `search_lines`, using line-level similarity ratio.
-/// Returns `(Some(index), similarity)` or `(None, 0.0)` if no window fits.
-fn find_best_match(original_lines: &[&str], search_lines: &[&str]) -> (Option<usize>, f64) {
+/// Ignores empty lines and comments for a "smart" match.
+/// Returns `(Some((start, end)), similarity)` or `(None, 0.0)` if no window fits.
+fn find_best_match(original_lines: &[&str], search_lines: &[&str]) -> (Option<(usize, usize)>, f64) {
     if search_lines.is_empty() || search_lines.len() > original_lines.len() {
         return (None, 0.0);
     }
 
-    let mut best_idx = None;
+    let norm_orig: Vec<(usize, String)> = original_lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (i, normalize_for_match(l)))
+        .filter(|(_, l)| !l.is_empty())
+        .collect();
+
+    let norm_search: Vec<String> = search_lines
+        .iter()
+        .map(|l| normalize_for_match(l))
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    if norm_search.is_empty() || norm_search.len() > norm_orig.len() {
+        return find_best_match_raw(original_lines, search_lines);
+    }
+
+    let mut best_match = None;
     let mut best_sim = 0.0;
-    let search_str = search_lines.join("\n");
+    let search_str = norm_search.join("\n");
 
-    for i in 0..=(original_lines.len() - search_lines.len()) {
-        let chunk_str = original_lines[i..i + search_lines.len()].join("\n");
+    for i in 0..=(norm_orig.len() - norm_search.len()) {
+        let chunk_str = norm_orig[i..i + norm_search.len()]
+            .iter()
+            .map(|(_, l)| l.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let diff = TextDiff::from_lines(&chunk_str, &search_str);
-
         let mut changes = 0;
         let mut total = 0;
         for change in diff.iter_all_changes() {
@@ -355,20 +432,47 @@ fn find_best_match(original_lines: &[&str], search_lines: &[&str]) -> (Option<us
             }
         }
 
-        let sim = if total == 0 {
-            1.0
-        } else {
-            1.0 - (changes as f64 / total as f64)
-        };
+        let sim = if total == 0 { 1.0 } else { 1.0 - (changes as f64 / total as f64) };
         if sim > best_sim {
             best_sim = sim;
-            best_idx = Some(i);
+            let start = norm_orig[i].0;
+            let end = norm_orig[i + norm_search.len() - 1].0 + 1;
+            best_match = Some((start, end));
         }
         if sim == 1.0 {
             break;
         }
     }
-    (best_idx, best_sim)
+
+    (best_match, best_sim)
+}
+
+fn find_best_match_raw(original_lines: &[&str], search_lines: &[&str]) -> (Option<(usize, usize)>, f64) {
+    let mut best_match = None;
+    let mut best_sim = 0.0;
+    let search_str = search_lines.join("\n");
+
+    for i in 0..=(original_lines.len() - search_lines.len()) {
+        let chunk_str = original_lines[i..i + search_lines.len()].join("\n");
+        let diff = TextDiff::from_lines(&chunk_str, &search_str);
+        let mut changes = 0;
+        let mut total = 0;
+        for change in diff.iter_all_changes() {
+            total += 1;
+            if change.tag() != ChangeTag::Equal {
+                changes += 1;
+            }
+        }
+        let sim = if total == 0 { 1.0 } else { 1.0 - (changes as f64 / total as f64) };
+        if sim > best_sim {
+            best_sim = sim;
+            best_match = Some((i, i + search_lines.len()));
+        }
+        if sim == 1.0 {
+            break;
+        }
+    }
+    (best_match, best_sim)
 }
 
 /// Pretty-print a coloured diff between the SEARCH and REPLACE blocks so the

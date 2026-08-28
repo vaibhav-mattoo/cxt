@@ -170,11 +170,17 @@ const AIDER_PATCH_BLOCK: &str = r#"<patch method="aider">
 Please apply changes using this aider style format all changed in single code block
 ```
 // src/filename1.rs
+<<<<<<< SEARCH
 [exact original lines (include enough context to be unique, avoid too thin blocks)]
+=======
 [modified lines]
+>>>>>>> REPLACE
  // src/filename2.rs
+<<<<<<< SEARCH
 [exact original lines (include enough context to be unique, avoid too thin blocks)]
+=======
 [modified lines]
+>>>>>>> REPLACE
 ```
 </patch>
 </context>
